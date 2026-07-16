@@ -1,0 +1,10 @@
+.git
+.venv
+node_modules
+**/node_modules
+**/__pycache__
+data
+dist
+coverage
+.env
+
