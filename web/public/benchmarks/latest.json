@@ -1,0 +1,39 @@
+{
+  "corpusSize": 10000,
+  "corpusVersion": 1,
+  "crawlTargetCount": 10006,
+  "elapsedSeconds": 4045.935,
+  "faultScenarios": [
+    "duplicate-delivery",
+    "expired-leases",
+    "malformed-html",
+    "opensearch-outage",
+    "oversized-response",
+    "postgres-reconnect",
+    "redirects",
+    "redis-loss",
+    "robots-exclusion",
+    "worker-termination"
+  ],
+  "frontierCount": 10007,
+  "gitCommit": "cedd63358985fbae7ceff8b8041a90d40657f3ba",
+  "indexedDocuments": 9902,
+  "invariants": {
+    "allEligibleUrlsTerminal": true,
+    "countersConsistent": true,
+    "indexMatchesPostgres": true,
+    "noStaleLeases": true,
+    "oneCurrentVersionPerResource": true,
+    "politenessRespected": true
+  },
+  "runId": "7b043366-48a3-44f1-9bf8-b727837e7629",
+  "schemaVersion": 1,
+  "terminalStates": {
+    "duplicate_content": 101,
+    "failed": 2,
+    "indexed": 9902,
+    "robots_blocked": 1,
+    "unsupported_content": 1
+  },
+  "verifiedAt": "2026-07-17T20:19:00.081306+00:00"
+}

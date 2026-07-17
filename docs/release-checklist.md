@@ -11,7 +11,7 @@
 - [x] Terraform `showcase` and `production` profiles validate
 - [x] Protected launch, teardown, cost, expiration, and cleanup workflows pass `actionlint`
 - [x] Backend coverage at least 85%; critical scheduler/worker/fetch/robots/task/index modules at least 90%
-- [ ] Deterministic 10,000-page fault run passed and artifact published
+- [x] Deterministic 10,000-page fault run passed and artifact published
 - [ ] Authenticated Playwright live-console journey passed
 - [ ] AWS recovery exercise met RPO/RTO target
 - [ ] Teardown audit proved no active billable Atlas resources
