@@ -10,6 +10,7 @@ def test_worker_main_connects_all_stage_queues(monkeypatch: pytest.MonkeyPatch) 
     queue_names: list[str] = []
     work_calls: list[str] = []
     worker_names: list[str] = []
+    preloaded: list[str] = []
 
     class FakeQueue:
         def __init__(self, name: str, *, connection: object) -> None:
@@ -33,6 +34,7 @@ def test_worker_main_connects_all_stage_queues(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(worker.Redis, "from_url", redis_from_url)
     monkeypatch.setattr(worker, "Queue", FakeQueue)
     monkeypatch.setattr(worker, "PlatformWorker", FakeWorker)
+    monkeypatch.setattr(worker.importlib, "import_module", preloaded.append)
     monkeypatch.setattr(worker.socket, "gethostname", lambda: "container-a")
     monkeypatch.setattr(worker.os, "getpid", lambda: 1)
 
@@ -41,6 +43,7 @@ def test_worker_main_connects_all_stage_queues(monkeypatch: pytest.MonkeyPatch) 
     assert queue_names == ["atlas-fetch", "atlas-extract", "atlas-index"]
     assert worker_names == ["atlas-worker-container-a-1"]
     assert work_calls == ["INFO"]
+    assert preloaded == ["atlas.jobs"]
 
 
 def test_worker_name_differs_between_containers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -76,5 +79,6 @@ def test_worker_module_entrypoint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("rq.Queue", CliQueue)
     monkeypatch.setattr("rq.worker.SpawnWorker", CliWorker)
     monkeypatch.setattr("rq.worker.Worker", CliWorker)
+    monkeypatch.setattr("rq.worker.RoundRobinWorker", CliWorker)
 
     runpy.run_module("atlas.worker", run_name="__main__")

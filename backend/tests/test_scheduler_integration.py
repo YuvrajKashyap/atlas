@@ -201,6 +201,37 @@ def test_scheduler_checks_each_fetch_host_once_per_tick(
     assert len(queues[PipelineTaskType.FETCH].enqueued) == 1
 
 
+def test_scheduler_prioritizes_downstream_pipeline_stages(db_session: Session) -> None:
+    run = create_run(db_session, _request("stage-priority"), commit=False)
+    start_run(db_session, run.id, commit=False)
+    run.global_concurrency = 1
+    entry = db_session.scalar(select(FrontierEntry).where(FrontierEntry.run_id == run.id))
+    assert entry is not None
+    create_pipeline_task(
+        db_session,
+        run_id=run.id,
+        frontier_entry_id=entry.id,
+        task_type=PipelineTaskType.EXTRACT,
+        generation=run.generation,
+        max_attempts=2,
+    )
+    create_pipeline_task(
+        db_session,
+        run_id=run.id,
+        frontier_entry_id=entry.id,
+        task_type=PipelineTaskType.INDEX,
+        generation=run.generation,
+        max_attempts=2,
+    )
+    db_session.commit()
+    queues = _queues()
+
+    assert scheduler._lease_and_enqueue(cast(Any, queues)) == 1
+    assert len(queues[PipelineTaskType.INDEX].enqueued) == 1
+    assert not queues[PipelineTaskType.EXTRACT].enqueued
+    assert not queues[PipelineTaskType.FETCH].enqueued
+
+
 def test_scheduler_duration_and_run_once_orchestration(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -241,6 +272,20 @@ def test_scheduler_duration_and_run_once_orchestration(
         "samples": 7,
     }
 
+    assert scheduler.run_once(
+        cast(Any, _queues()),
+        sample_metrics=False,
+        perform_maintenance=False,
+    ) == {
+        "scheduled_runs": 0,
+        "bootstrapped": 0,
+        "recovered": 0,
+        "dead_lettered": 0,
+        "enqueued": 5,
+        "finalized": 0,
+        "samples": 0,
+    }
+
 
 def test_scheduler_main_builds_queues_and_ticks(monkeypatch: pytest.MonkeyPatch) -> None:
     class StopScheduler(RuntimeError):
@@ -249,14 +294,21 @@ def test_scheduler_main_builds_queues_and_ticks(monkeypatch: pytest.MonkeyPatch)
     redis = object()
     created_queues: list[str] = []
     samples: list[bool] = []
+    maintenance: list[bool] = []
 
     class MainQueue:
         def __init__(self, name: str, *, connection: object) -> None:
             assert connection is redis
             created_queues.append(name)
 
-    def run(_queues: object, *, sample_metrics: bool = True) -> dict[str, int]:
+    def run(
+        _queues: object,
+        *,
+        sample_metrics: bool = True,
+        perform_maintenance: bool = True,
+    ) -> dict[str, int]:
         samples.append(sample_metrics)
+        maintenance.append(perform_maintenance)
         return {"enqueued": 1}
 
     def stop(_seconds: float) -> None:
@@ -275,3 +327,4 @@ def test_scheduler_main_builds_queues_and_ticks(monkeypatch: pytest.MonkeyPatch)
 
     assert created_queues == ["atlas-fetch", "atlas-extract", "atlas-index"]
     assert samples == [True]
+    assert maintenance == [True]
