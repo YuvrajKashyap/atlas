@@ -11,12 +11,21 @@
 - [x] Terraform `showcase` and `production` profiles validate
 - [x] Protected launch, teardown, cost, expiration, and cleanup workflows pass `actionlint`
 - [x] Backend coverage at least 85%; critical scheduler/worker/fetch/robots/task/index modules at least 90%
-- [x] Deterministic 10,000-page fault run passed and artifact published
+- [x] Deterministic 10,000-page fault run passed and [artifact published](../web/public/benchmarks/latest.json)
 - [ ] Authenticated Playwright live-console journey passed
 - [ ] AWS recovery exercise met RPO/RTO target
 - [ ] Teardown audit proved no active billable Atlas resources
-- [ ] Clean-checkout recreation passed
+- [ ] Clean-checkout AWS runtime recreation passed
 - [x] Public GitHub repository published with green CI and CodeQL
 - [ ] Signed release tag, final screenshots, and demo recording published
 
 Unchecked items are release blockers, not aspirational polish.
+
+## Published evidence
+
+- Permanent project record: <https://atlas.yuvrajkashyap.com>
+- Verified benchmark workflow: <https://github.com/YuvrajKashyap/atlas/actions/runs/29606520125>
+- Tested benchmark commit: [`cedd63358985fbae7ceff8b8041a90d40657f3ba`](https://github.com/YuvrajKashyap/atlas/commit/cedd63358985fbae7ceff8b8041a90d40657f3ba)
+- Verified corpus artifact: [`web/public/benchmarks/latest.json`](../web/public/benchmarks/latest.json)
+
+The launch workflow now treats the authenticated Playwright journey as a release gate and uploads its JSON evidence plus screenshot. The remaining unchecked items cannot be claimed until the expiring AWS rehearsal and teardown complete.
