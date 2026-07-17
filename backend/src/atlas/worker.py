@@ -1,3 +1,4 @@
+import importlib
 import os
 import socket
 
@@ -8,7 +9,7 @@ from rq import Queue
 if os.name == "nt":
     from rq.worker import SpawnWorker as PlatformWorker
 else:
-    from rq.worker import Worker as PlatformWorker
+    from rq.worker import RoundRobinWorker as PlatformWorker
 
 from atlas.config import get_settings
 from atlas.logging import configure_logging
@@ -19,9 +20,15 @@ def worker_name() -> str:
     return f"atlas-worker-{socket.gethostname()}-{os.getpid()}"
 
 
+def preload_job_modules() -> None:
+    """Load heavy job dependencies once in the parent before RQ forks work horses."""
+    importlib.import_module("atlas.jobs")
+
+
 def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
+    preload_job_modules()
     redis = Redis.from_url(settings.redis_url, password=settings.redis_password or None)
     queues = [
         Queue("atlas-fetch", connection=redis),

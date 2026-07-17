@@ -34,7 +34,7 @@ if (command === "start") {
       max_retries: 5,
       max_duration_seconds: 10800,
       global_concurrency: 20,
-      per_domain_concurrency: 4,
+      per_domain_concurrency: 8,
       allowed_ports: [80],
     }),
   });

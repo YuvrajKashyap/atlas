@@ -6,7 +6,7 @@ import structlog
 from croniter import croniter
 from redis import Redis
 from rq import Queue
-from sqlalchemy import delete, exists, func, select, update
+from sqlalchemy import case, delete, exists, func, select, update
 from sqlalchemy.orm import Session
 
 from atlas.config import get_settings
@@ -185,6 +185,11 @@ def _can_lease_fetch(session: Session, task: PipelineTask, run: CrawlRun, now: d
 def _lease_and_enqueue(queues: dict[PipelineTaskType, Queue]) -> int:
     now = datetime.now(UTC)
     enqueued = 0
+    stage_priority = case(
+        (PipelineTask.task_type == PipelineTaskType.INDEX, 0),
+        (PipelineTask.task_type == PipelineTaskType.EXTRACT, 1),
+        else_=2,
+    )
     with SessionLocal() as session:
         candidates = list(
             session.execute(
@@ -198,7 +203,7 @@ def _lease_and_enqueue(queues: dict[PipelineTaskType, Queue]) -> int:
                     ),
                     PipelineTask.available_at <= now,
                 )
-                .order_by(PipelineTask.available_at, PipelineTask.created_at)
+                .order_by(stage_priority, PipelineTask.available_at, PipelineTask.created_at)
                 .limit(200)
                 .with_for_update(of=PipelineTask, skip_locked=True)
             )
@@ -399,13 +404,19 @@ def _sample_metrics(queues: dict[PipelineTaskType, Queue]) -> int:
 
 
 def run_once(
-    queues: dict[PipelineTaskType, Queue], *, sample_metrics: bool = True
+    queues: dict[PipelineTaskType, Queue],
+    *,
+    sample_metrics: bool = True,
+    perform_maintenance: bool = True,
 ) -> dict[str, int]:
-    scheduled_runs = _create_due_runs()
-    bootstrapped = _bootstrap_fetch_tasks()
-    recovered, dead_lettered = _recover_expired_leases()
+    scheduled_runs = _create_due_runs() if perform_maintenance else 0
+    bootstrapped = _bootstrap_fetch_tasks() if perform_maintenance else 0
+    if perform_maintenance:
+        recovered, dead_lettered = _recover_expired_leases()
+    else:
+        recovered, dead_lettered = 0, 0
     enqueued = _lease_and_enqueue(queues)
-    finalized = _finalize_runs()
+    finalized = _finalize_runs() if perform_maintenance else 0
     samples = _sample_metrics(queues) if sample_metrics else 0
     return {
         "scheduled_runs": scheduled_runs,
@@ -427,6 +438,7 @@ def main() -> None:
     }
     logger.info("scheduler_started", poll_seconds=settings.scheduler_poll_seconds)
     last_sampled_at: datetime | None = None
+    last_maintained_at: datetime | None = None
     while True:
         try:
             now = datetime.now(UTC)
@@ -434,9 +446,20 @@ def main() -> None:
                 last_sampled_at is None
                 or (now - last_sampled_at).total_seconds() >= settings.metrics_sample_seconds
             )
-            result = run_once(queues, sample_metrics=should_sample)
+            should_maintain = (
+                last_maintained_at is None
+                or (now - last_maintained_at).total_seconds()
+                >= settings.scheduler_maintenance_seconds
+            )
+            result = run_once(
+                queues,
+                sample_metrics=should_sample,
+                perform_maintenance=should_maintain,
+            )
             if should_sample:
                 last_sampled_at = now
+            if should_maintain:
+                last_maintained_at = now
             if any(result.values()):
                 logger.info("scheduler_tick", **result)
         except Exception:

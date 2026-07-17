@@ -45,6 +45,11 @@ class Settings(BaseSettings):
         ge=0.05,
         validation_alias="ATLAS_SCHEDULER_POLL_SECONDS",
     )
+    scheduler_maintenance_seconds: float = Field(
+        default=30,
+        ge=1,
+        validation_alias="ATLAS_SCHEDULER_MAINTENANCE_SECONDS",
+    )
     frontier_lease_seconds: int = 180
     task_lease_seconds: int = 300
     task_heartbeat_seconds: int = 30
