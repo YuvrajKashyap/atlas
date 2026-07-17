@@ -52,6 +52,7 @@ from atlas.models import (
     PipelineTask,
     WebResource,
 )
+from atlas.politeness import acquire_fetch_permit
 from atlas.retry import is_transient_status
 from atlas.robots import RobotsService
 from atlas.similarity import (
@@ -331,6 +332,28 @@ def _process_fetch(task: PipelineTask, lease_token: uuid.UUID) -> dict[str, str]
                         frontier_entry_id=entry.id,
                         payload={"error_type": type(exc).__name__, "message": str(exc)[:500]},
                     )
+
+            permit_run_id = run.id
+            permit_host = entry.host
+            permit_lease_seconds = max(
+                settings.task_lease_seconds,
+                30 + (run.per_domain_concurrency * decision.crawl_delay_ms + 999) // 1000,
+            )
+            heartbeat_task(
+                session,
+                task.id,
+                lease_token,
+                lease_seconds=permit_lease_seconds,
+            )
+            session.commit()
+            with SessionLocal() as permit_session:
+                permit_started_at = acquire_fetch_permit(
+                    permit_session,
+                    run_id=permit_run_id,
+                    host=permit_host,
+                    delay_ms=decision.crawl_delay_ms,
+                )
+            attempt.started_at = permit_started_at
 
             result = fetch_url(
                 run,

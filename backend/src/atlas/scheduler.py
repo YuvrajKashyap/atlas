@@ -23,7 +23,6 @@ from atlas.models import (
     CrawlDefinition,
     CrawlRun,
     DomainLease,
-    DomainState,
     FetchAttempt,
     FrontierEntry,
     MetricSample,
@@ -164,22 +163,7 @@ def _can_lease_fetch(session: Session, task: PipelineTask, run: CrawlRun, now: d
         )
         or 0
     )
-    if active_for_host >= run.per_domain_concurrency:
-        return False
-    state = session.scalar(
-        select(DomainState)
-        .where(DomainState.run_id == run.id, DomainState.host == entry.host)
-        .with_for_update()
-    )
-    if state is None:
-        state = DomainState(run_id=run.id, host=entry.host)
-        session.add(state)
-        session.flush()
-    if state.next_allowed_at is not None and state.next_allowed_at > now:
-        return False
-    delay_ms = max(run.per_domain_delay_ms, state.crawl_delay_ms or 0)
-    state.next_allowed_at = now + timedelta(milliseconds=delay_ms)
-    return True
+    return active_for_host < run.per_domain_concurrency
 
 
 def _lease_and_enqueue(queues: dict[PipelineTaskType, Queue]) -> int:
