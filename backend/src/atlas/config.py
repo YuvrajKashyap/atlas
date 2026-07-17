@@ -40,7 +40,11 @@ class Settings(BaseSettings):
         default=False, validation_alias="ATLAS_ALLOW_PRIVATE_NETWORKS"
     )
     log_level: str = Field(default="INFO", validation_alias="ATLAS_LOG_LEVEL")
-    scheduler_poll_seconds: float = 1.0
+    scheduler_poll_seconds: float = Field(
+        default=0.1,
+        ge=0.05,
+        validation_alias="ATLAS_SCHEDULER_POLL_SECONDS",
+    )
     frontier_lease_seconds: int = 180
     task_lease_seconds: int = 300
     task_heartbeat_seconds: int = 30

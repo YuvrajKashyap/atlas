@@ -6,7 +6,7 @@ import structlog
 from croniter import croniter
 from redis import Redis
 from rq import Queue
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, exists, func, select, update
 from sqlalchemy.orm import Session
 
 from atlas.config import get_settings
@@ -103,6 +103,13 @@ def _bootstrap_fetch_tasks() -> int:
                     FrontierEntry.status.in_(
                         [FrontierStatus.DISCOVERED, FrontierStatus.RETRY_SCHEDULED]
                     ),
+                    ~exists(
+                        select(PipelineTask.id).where(
+                            PipelineTask.frontier_entry_id == FrontierEntry.id,
+                            PipelineTask.task_type == PipelineTaskType.FETCH,
+                            PipelineTask.generation == CrawlRun.generation,
+                        )
+                    ),
                 )
                 .order_by(FrontierEntry.priority.desc(), FrontierEntry.created_at)
                 .limit(1000)
@@ -180,9 +187,10 @@ def _lease_and_enqueue(queues: dict[PipelineTaskType, Queue]) -> int:
     enqueued = 0
     with SessionLocal() as session:
         candidates = list(
-            session.scalars(
-                select(PipelineTask)
+            session.execute(
+                select(PipelineTask, CrawlRun, FrontierEntry)
                 .join(CrawlRun, CrawlRun.id == PipelineTask.run_id)
+                .join(FrontierEntry, FrontierEntry.id == PipelineTask.frontier_entry_id)
                 .where(
                     CrawlRun.status == CrawlRunStatus.RUNNING,
                     PipelineTask.status.in_(
@@ -192,15 +200,12 @@ def _lease_and_enqueue(queues: dict[PipelineTaskType, Queue]) -> int:
                 )
                 .order_by(PipelineTask.available_at, PipelineTask.created_at)
                 .limit(200)
-                .with_for_update(skip_locked=True)
+                .with_for_update(of=PipelineTask, skip_locked=True)
             )
         )
         run_active: dict[uuid.UUID, int] = {}
-        for task in candidates:
-            run = session.get(CrawlRun, task.run_id)
-            entry = session.get(FrontierEntry, task.frontier_entry_id)
-            if run is None or entry is None:
-                continue
+        checked_fetch_hosts: set[tuple[uuid.UUID, str]] = set()
+        for task, run, entry in candidates:
             active = run_active.get(run.id)
             if active is None:
                 active = (
@@ -216,10 +221,13 @@ def _lease_and_enqueue(queues: dict[PipelineTaskType, Queue]) -> int:
                 )
             if active >= run.global_concurrency:
                 continue
-            if task.task_type == PipelineTaskType.FETCH and not _can_lease_fetch(
-                session, task, run, now
-            ):
-                continue
+            if task.task_type == PipelineTaskType.FETCH:
+                fetch_host = (run.id, entry.host)
+                if fetch_host in checked_fetch_hosts:
+                    continue
+                checked_fetch_hosts.add(fetch_host)
+                if not _can_lease_fetch(session, task, run, now):
+                    continue
 
             token = uuid.uuid4()
             task.status = PipelineTaskStatus.LEASED

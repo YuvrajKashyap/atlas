@@ -20,6 +20,7 @@ from atlas.models import (
 )
 from atlas.schemas import AllowedDomainInput, CrawlRunCreate
 from atlas.services.runs import create_run, start_run, stop_run
+from atlas.tasking import create_pipeline_task
 
 
 class FakeQueue:
@@ -155,6 +156,49 @@ def test_scheduler_honors_politeness_failure_recovery_and_stop(db_session: Sessi
     assert run.status == CrawlRunStatus.CANCELLED
     entries = list(db_session.scalars(select(FrontierEntry).where(FrontierEntry.run_id == run.id)))
     assert all(entry.status == FrontierStatus.BUDGET_EXHAUSTED for entry in entries)
+
+
+def test_scheduler_checks_each_fetch_host_once_per_tick(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = create_run(db_session, _request("host-batch"), commit=False)
+    start_run(db_session, run.id, commit=False)
+    for suffix in ("one", "two"):
+        entry = FrontierEntry(
+            run_id=run.id,
+            url=f"https://example.com/{suffix}",
+            normalized_url=f"https://example.com/{suffix}",
+            host="example.com",
+            status=FrontierStatus.DISCOVERED,
+            depth=0,
+            next_fetch_at=datetime.now(UTC),
+        )
+        db_session.add(entry)
+        db_session.flush()
+        create_pipeline_task(
+            db_session,
+            run_id=run.id,
+            frontier_entry_id=entry.id,
+            task_type=PipelineTaskType.FETCH,
+            generation=run.generation,
+            max_attempts=2,
+        )
+    db_session.commit()
+
+    calls = 0
+    original = scheduler._can_lease_fetch
+
+    def counted(*args: Any, **kwargs: Any) -> bool:
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(scheduler, "_can_lease_fetch", counted)
+    queues = _queues()
+
+    assert scheduler._lease_and_enqueue(cast(Any, queues)) == 1
+    assert calls == 1
+    assert len(queues[PipelineTaskType.FETCH].enqueued) == 1
 
 
 def test_scheduler_duration_and_run_once_orchestration(
