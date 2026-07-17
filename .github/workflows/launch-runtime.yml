@@ -74,7 +74,7 @@ jobs:
             echo "TF_VAR_container_image=bootstrap.invalid/atlas:plan"
           } >> "$GITHUB_ENV"
 
-      - uses: aws-actions/configure-aws-credentials@v5
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
