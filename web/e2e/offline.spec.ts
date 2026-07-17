@@ -15,7 +15,7 @@ test("permanent project record renders without browser errors", async ({ page })
   expect(errors).toEqual([]);
 });
 
-test("public navigation exposes architecture and verified-evidence policy", async ({ page }) => {
+test("public navigation exposes architecture and verified benchmark evidence", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("link", { name: "Architecture", exact: true }).click();
   await expect(page).toHaveURL(/\/architecture$/);
@@ -23,7 +23,10 @@ test("public navigation exposes architecture and verified-evidence policy", asyn
 
   await page.getByRole("link", { name: "Benchmarks", exact: true }).click();
   await expect(page).toHaveURL(/\/benchmarks$/);
-  await expect(page.getByText(/no release benchmark has been published yet/i)).toBeVisible();
+  await expect(page.getByText("cedd63358985fbae7ceff8b8041a90d40657f3ba")).toBeVisible();
+  await expect(page.getByText("All eligible URLs terminal")).toBeVisible();
+  await expect(page.getByText("worker-termination")).toBeVisible();
+  await expect(page.getByText(/no release benchmark has been published yet/i)).toHaveCount(0);
 });
 
 test("offline console fails closed and sends no crawler API request", async ({ page }) => {
