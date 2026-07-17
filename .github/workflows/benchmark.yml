@@ -34,6 +34,18 @@ jobs:
           done
           docker compose logs
           exit 1
+      - name: Verify worker fleet
+        run: |
+          for attempt in $(seq 1 30); do
+            worker_count="$(docker compose ps --status running -q worker | wc -l | tr -d ' ')"
+            if [ "$worker_count" -eq 8 ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose ps worker
+          docker compose logs worker
+          exit 1
       - name: Start benchmark run
         id: run
         run: |
