@@ -37,6 +37,7 @@ jobs:
       - name: Verify worker fleet
         run: |
           for attempt in $(seq 1 30); do
+            echo "worker fleet attempt $attempt"
             worker_count="$(docker compose ps --status running -q worker | wc -l | tr -d ' ')"
             if [ "$worker_count" -eq 8 ]; then
               exit 0
