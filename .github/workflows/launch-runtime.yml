@@ -100,7 +100,7 @@ jobs:
           terraform plan -var-file="profiles/${{ inputs.profile }}.tfvars" -out=atlas.tfplan
           terraform show -json atlas.tfplan > atlas.tfplan.json
 
-      - uses: infracost/actions/setup@v3
+      - uses: infracost/actions/setup@v4
         with:
           api-key: ${{ secrets.INFRACOST_API_KEY }}
 
