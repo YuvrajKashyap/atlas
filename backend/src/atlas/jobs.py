@@ -62,7 +62,7 @@ from atlas.similarity import (
     simhash64,
     simhash_bands,
 )
-from atlas.sitemaps import MAX_SITEMAP_DOCUMENTS, discover_sitemaps
+from atlas.sitemaps import MAX_SITEMAP_DOCUMENTS, MAX_SITEMAP_URLS, discover_sitemaps
 from atlas.tasking import (
     complete_task,
     create_pipeline_task,
@@ -299,6 +299,7 @@ def _process_fetch(task: PipelineTask, lease_token: uuid.UUID) -> dict[str, str]
                         links=list(sitemap_result.urls),
                         allowed_domains=allowed_domains,
                         target_depth=0,
+                        max_links=MAX_SITEMAP_URLS,
                     )
                     domain_state.sitemaps_discovered_at = datetime.now(UTC)
                     domain_state.sitemap_url_count = len(sitemap_result.urls)
@@ -494,9 +495,10 @@ def _discover_links(
     links: list[str],
     allowed_domains: list[tuple[str, bool]],
     target_depth: int | None = None,
+    max_links: int = 1000,
 ) -> int:
     accepted_count = 0
-    for target_url in links[:1000]:
+    for target_url in links[:max_links]:
         target_host = host_for_url(target_url)
         discovered_depth = entry.depth + 1 if target_depth is None else target_depth
         within_depth = target_depth is not None or entry.depth < run.max_depth
