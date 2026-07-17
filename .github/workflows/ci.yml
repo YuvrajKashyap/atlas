@@ -106,7 +106,7 @@ jobs:
       - run: docker compose config --quiet
       - run: docker compose build api web
       - run: docker image tag atlas-api:latest atlas-api:${{ github.sha }} || true
-      - uses: aquasecurity/trivy-action@0.33.1
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: atlas-api:latest
           format: table

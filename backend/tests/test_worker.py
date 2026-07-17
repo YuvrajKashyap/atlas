@@ -60,5 +60,6 @@ def test_worker_module_entrypoint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("redis.Redis.from_url", redis_from_url)
     monkeypatch.setattr("rq.Queue", CliQueue)
     monkeypatch.setattr("rq.worker.SpawnWorker", CliWorker)
+    monkeypatch.setattr("rq.worker.Worker", CliWorker)
 
     runpy.run_module("atlas.worker", run_name="__main__")
