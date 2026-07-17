@@ -45,13 +45,23 @@ if (command === "start") {
   if (!runId) throw new Error("benchmark.mjs wait requires a run ID");
   const deadline = Date.now() + 3 * 60 * 60 * 1000;
   let run;
+  let lastPollError;
   while (Date.now() < deadline) {
-    run = await request(`/crawl-runs/${runId}`);
-    if (["completed", "failed", "cancelled"].includes(run.status)) break;
+    try {
+      run = await request(`/crawl-runs/${runId}`);
+      lastPollError = undefined;
+      if (["completed", "failed", "cancelled"].includes(run.status)) break;
+    } catch (error) {
+      lastPollError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`Benchmark status poll failed; retrying: ${message}\n`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 10_000));
   }
   if (!run || run.status !== "completed") {
-    throw new Error(`Benchmark did not complete: ${JSON.stringify(run)}`);
+    const pollFailure =
+      lastPollError instanceof Error ? `; last poll error: ${lastPollError.message}` : "";
+    throw new Error(`Benchmark did not complete: ${JSON.stringify(run)}${pollFailure}`);
   }
   await mkdir("artifacts", { recursive: true });
   await writeFile("artifacts/benchmark-run.json", `${JSON.stringify(run, null, 2)}\n`);
