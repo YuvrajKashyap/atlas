@@ -171,7 +171,7 @@ jobs:
       - name: Publish verified online state
         run: node scripts/edge-config.mjs set online "$ATLAS_API_BASE_URL" "$ENVIRONMENT_ID" "$EXPIRES_AT" "Atlas is online for a time-bounded, authenticated demonstration."
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: atlas-launch-${{ env.ENVIRONMENT_ID }}
           path: |
