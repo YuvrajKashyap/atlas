@@ -1,5 +1,6 @@
 # pyright: reportPrivateUsage=false
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -130,12 +131,25 @@ def test_scheduler_honors_politeness_failure_recovery_and_stop(db_session: Sessi
     assert task is not None
     now = datetime.now(UTC)
     assert scheduler._can_lease_fetch(db_session, task, run, now)
+    token = uuid.uuid4()
+    task.status = PipelineTaskStatus.LEASED
+    task.lease_token = token
+    task.lease_expires_at = now + timedelta(minutes=5)
+    db_session.add(
+        DomainLease(
+            run_id=run.id,
+            task_id=task.id,
+            host="example.com",
+            lease_token=token,
+            expires_at=task.lease_expires_at,
+        )
+    )
+    db_session.flush()
     assert not scheduler._can_lease_fetch(db_session, task, run, now)
-    db_session.commit()
-
-    state = db_session.scalar(select(DomainState).where(DomainState.run_id == run.id))
-    assert state is not None
-    state.next_allowed_at = None
+    db_session.execute(delete(DomainLease).where(DomainLease.task_id == task.id))
+    task.status = PipelineTaskStatus.READY
+    task.lease_token = None
+    task.lease_expires_at = None
     db_session.commit()
     failed_queues = _queues(fail_fetch=True)
     assert scheduler._lease_and_enqueue(cast(Any, failed_queues)) == 0

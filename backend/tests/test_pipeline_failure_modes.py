@@ -21,6 +21,7 @@ from atlas.models import (
     PipelineTask,
     WebResource,
 )
+from atlas.politeness import acquire_fetch_permit
 from atlas.robots import RobotsDecision, RobotsService
 from atlas.schemas import AllowedDomainInput, CrawlRunCreate
 from atlas.services.runs import create_run, start_run
@@ -97,6 +98,27 @@ def _response(url: str, *, status: int = 200, content_type: str = "text/html") -
         redirect_chain=[],
         request_headers={},
     )
+
+
+def test_fetch_permit_enforces_delay_at_request_boundary(db_session: Session) -> None:
+    task = _task(db_session, "request-boundary-permit")
+    entry = db_session.get(FrontierEntry, task.frontier_entry_id)
+    assert entry is not None
+
+    first = acquire_fetch_permit(
+        db_session,
+        run_id=task.run_id,
+        host=entry.host,
+        delay_ms=100,
+    )
+    second = acquire_fetch_permit(
+        db_session,
+        run_id=task.run_id,
+        host=entry.host,
+        delay_ms=100,
+    )
+
+    assert (second - first).total_seconds() >= 0.09
 
 
 @pytest.mark.parametrize(
