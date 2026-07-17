@@ -186,24 +186,91 @@ function RecoveryRow({ failure, detection, recovery }: { failure: string; detect
   return <div className="architecture-row" role="row"><strong>{failure}</strong><span>{detection}</span><span>{recovery}</span></div>;
 }
 
+const requiredFaultScenarios = [
+  "duplicate-delivery",
+  "expired-leases",
+  "malformed-html",
+  "opensearch-outage",
+  "oversized-response",
+  "postgres-reconnect",
+  "redirects",
+  "redis-loss",
+  "robots-exclusion",
+  "worker-termination",
+] as const;
+
 interface BenchmarkReport {
   schemaVersion: number;
+  runId: string;
   verifiedAt: string;
   gitCommit: string;
-  corpusPages: number;
+  corpusSize: number;
+  corpusVersion: number;
+  crawlTargetCount: number;
+  frontierCount: number;
   elapsedSeconds: number;
   indexedDocuments: number;
-  terminalUrls: number;
-  staleLeases: number;
-  counterInconsistencies: number;
-  scenarios: { name: string; passed: boolean }[];
-  artifactUrl?: string;
+  terminalStates: Record<string, number>;
+  invariants: {
+    allEligibleUrlsTerminal: boolean;
+    countersConsistent: boolean;
+    indexMatchesPostgres: boolean;
+    noStaleLeases: boolean;
+    oneCurrentVersionPerResource: boolean;
+    politenessRespected: boolean;
+  };
+  faultScenarios: string[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isBenchmarkReport(value: unknown): value is BenchmarkReport {
+  if (!isRecord(value) || !isRecord(value.invariants) || !isRecord(value.terminalStates)) return false;
+
+  const numericFields = [
+    value.schemaVersion,
+    value.corpusSize,
+    value.corpusVersion,
+    value.crawlTargetCount,
+    value.frontierCount,
+    value.elapsedSeconds,
+    value.indexedDocuments,
+  ];
+  const invariantFields = [
+    value.invariants.allEligibleUrlsTerminal,
+    value.invariants.countersConsistent,
+    value.invariants.indexMatchesPostgres,
+    value.invariants.noStaleLeases,
+    value.invariants.oneCurrentVersionPerResource,
+    value.invariants.politenessRespected,
+  ];
+  const terminalCounts = Object.values(value.terminalStates);
+  const faultScenarios = Array.isArray(value.faultScenarios) ? value.faultScenarios : [];
+
+  return (
+    value.schemaVersion === 1 &&
+    numericFields.every((field) => typeof field === "number" && Number.isFinite(field) && field >= 0) &&
+    typeof value.runId === "string" && value.runId.length > 0 &&
+    typeof value.verifiedAt === "string" &&
+    typeof value.gitCommit === "string" && /^[0-9a-f]{40}$/i.test(value.gitCommit) &&
+    invariantFields.every((field) => field === true) &&
+    terminalCounts.length > 0 &&
+    terminalCounts.every((count) => typeof count === "number" && Number.isInteger(count) && count >= 0) &&
+    terminalCounts.reduce<number>((total, count) => total + (count as number), 0) === value.frontierCount &&
+    value.terminalStates.indexed === value.indexedDocuments &&
+    faultScenarios.length === requiredFaultScenarios.length &&
+    faultScenarios.every((scenario) => typeof scenario === "string") &&
+    requiredFaultScenarios.every((scenario) => faultScenarios.includes(scenario))
+  );
 }
 
 async function fetchBenchmark(): Promise<BenchmarkReport | null> {
   const response = await fetch("/benchmarks/latest.json", { headers: { Accept: "application/json" } });
   if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) return null;
-  return response.json() as Promise<BenchmarkReport>;
+  const report: unknown = await response.json();
+  return isBenchmarkReport(report) ? report : null;
 }
 
 export function BenchmarksPage() {
@@ -225,13 +292,22 @@ export function BenchmarksPage() {
 }
 
 function BenchmarkEvidence({ report }: { report: BenchmarkReport }) {
+  const terminalUrls = Object.values(report.terminalStates).reduce((total, count) => total + count, 0);
   const cards = [
-    ["Corpus", report.corpusPages.toLocaleString()],
-    ["Elapsed", `${report.elapsedSeconds.toFixed(1)}s`],
+    ["Corpus", report.corpusSize.toLocaleString()],
+    ["Crawl targets", report.crawlTargetCount.toLocaleString()],
+    ["Frontier URLs", report.frontierCount.toLocaleString()],
     ["Indexed", report.indexedDocuments.toLocaleString()],
-    ["Terminal URLs", report.terminalUrls.toLocaleString()],
-    ["Stale leases", report.staleLeases.toString()],
-    ["Counter drift", report.counterInconsistencies.toString()],
+    ["Terminal URLs", terminalUrls.toLocaleString()],
+    ["Elapsed", `${report.elapsedSeconds.toFixed(1)}s`],
+  ];
+  const invariants: [string, boolean][] = [
+    ["All eligible URLs terminal", report.invariants.allEligibleUrlsTerminal],
+    ["Counters consistent", report.invariants.countersConsistent],
+    ["Index matches PostgreSQL", report.invariants.indexMatchesPostgres],
+    ["No stale leases", report.invariants.noStaleLeases],
+    ["One current version per resource", report.invariants.oneCurrentVersionPerResource],
+    ["Politeness respected", report.invariants.politenessRespected],
   ];
   return (
     <section className="benchmark-evidence">
@@ -241,7 +317,8 @@ function BenchmarkEvidence({ report }: { report: BenchmarkReport }) {
       </div>
       <div className="evidence-grid">{cards.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
       <div className="scenario-list">
-        {report.scenarios.map((scenario) => <div key={scenario.name}><Check size={15} /><span>{scenario.name}</span><strong>{scenario.passed ? "PASS" : "FAIL"}</strong></div>)}
+        {invariants.map(([name, passed]) => <div key={name}><Check size={15} /><span>{name}</span><strong>{passed ? "PASS" : "FAIL"}</strong></div>)}
+        {report.faultScenarios.map((scenario) => <div key={scenario}><Check size={15} /><span>{scenario}</span><strong>PASS</strong></div>)}
       </div>
     </section>
   );
