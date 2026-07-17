@@ -3,7 +3,16 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from atlas.enums import CrawlRunStatus, FetchOutcome, FrontierStatus
+from atlas.enums import (
+    ChangeKind,
+    CrawlRunStatus,
+    FetchOutcome,
+    FrontierStatus,
+    IncidentStatus,
+    IndexBuildStatus,
+    PipelineTaskStatus,
+    PipelineTaskType,
+)
 
 
 class AllowedDomainInput(BaseModel):
@@ -22,6 +31,13 @@ class CrawlRunCreate(BaseModel):
     max_response_bytes: int = Field(default=2_000_000, ge=64_000, le=10_000_000)
     max_redirects: int = Field(default=5, ge=0, le=10)
     max_retries: int = Field(default=3, ge=0, le=8)
+    max_duration_seconds: int = Field(default=3600, ge=60, le=86_400)
+    global_concurrency: int = Field(default=20, ge=1, le=200)
+    per_domain_concurrency: int = Field(default=1, ge=1, le=8)
+    allowed_content_types: list[str] = Field(
+        default_factory=lambda: ["text/html", "application/xhtml+xml"], min_length=1, max_length=10
+    )
+    allowed_ports: list[int] = Field(default_factory=lambda: [80, 443], min_length=1, max_length=4)
     user_agent: str = Field(
         default="AtlasBot/0.1 (+https://github.com/atlas-crawler)",
         min_length=8,
@@ -43,6 +59,22 @@ class CrawlRunCreate(BaseModel):
             raise ValueError("Seed URLs must be unique")
         return value
 
+    @field_validator("allowed_ports")
+    @classmethod
+    def safe_ports(cls, value: list[int]) -> list[int]:
+        if any(port not in {80, 443} for port in value):
+            raise ValueError("Atlas only permits ports 80 and 443")
+        return sorted(set(value))
+
+    @field_validator("allowed_content_types")
+    @classmethod
+    def html_content_types(cls, value: list[str]) -> list[str]:
+        normalized = sorted({item.split(";", 1)[0].strip().lower() for item in value})
+        permitted = {"text/html", "application/xhtml+xml"}
+        if not normalized or not set(normalized).issubset(permitted):
+            raise ValueError("Atlas currently supports HTML and XHTML only")
+        return normalized
+
 
 class RunCounters(BaseModel):
     discovered: int = 0
@@ -60,6 +92,8 @@ class CrawlRunRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    definition_id: uuid.UUID | None
+    generation: int
     name: str
     status: CrawlRunStatus
     max_pages: int
@@ -69,6 +103,11 @@ class CrawlRunRead(BaseModel):
     max_response_bytes: int
     max_redirects: int
     max_retries: int
+    max_duration_seconds: int
+    global_concurrency: int
+    per_domain_concurrency: int
+    allowed_content_types: list[str]
+    allowed_ports: list[int]
     user_agent: str
     created_at: datetime
     started_at: datetime | None
@@ -116,6 +155,11 @@ class DocumentRead(BaseModel):
     run_id: uuid.UUID
     frontier_entry_id: uuid.UUID
     fetch_attempt_id: uuid.UUID
+    resource_id: uuid.UUID | None
+    previous_version_id: uuid.UUID | None
+    version_number: int
+    is_current: bool
+    change_kind: ChangeKind
     url: str
     canonical_url: str
     host: str
@@ -126,6 +170,9 @@ class DocumentRead(BaseModel):
     main_text: str
     text_length: int
     content_hash: str
+    simhash: str | None
+    simhash_bands: list[int]
+    duplicate_cluster_id: uuid.UUID | None
     duplicate_of_document_id: uuid.UUID | None
     extraction_confidence: float
     parser_name: str
@@ -142,6 +189,11 @@ class DocumentSummary(BaseModel):
     id: uuid.UUID
     run_id: uuid.UUID
     frontier_entry_id: uuid.UUID
+    resource_id: uuid.UUID | None
+    previous_version_id: uuid.UUID | None
+    version_number: int
+    is_current: bool
+    change_kind: ChangeKind
     url: str
     canonical_url: str
     host: str
@@ -150,6 +202,8 @@ class DocumentSummary(BaseModel):
     language: str | None
     text_length: int
     content_hash: str
+    simhash: str | None
+    duplicate_cluster_id: uuid.UUID | None
     duplicate_of_document_id: uuid.UUID | None
     extraction_confidence: float
     parser_name: str
@@ -183,6 +237,26 @@ class FetchAttemptRead(BaseModel):
     body_sha256: str | None
 
 
+class ExtractionAttemptRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    run_id: uuid.UUID
+    fetch_attempt_id: uuid.UUID
+    document_id: uuid.UUID | None
+    parser_name: str
+    parser_version: str
+    succeeded: bool
+    promoted: bool
+    confidence: float | None
+    text_length: int | None
+    warnings: list[str]
+    duration_ms: float | None
+    error_type: str | None
+    error_message: str | None
+    created_at: datetime
+
+
 class CrawlEventRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -206,3 +280,93 @@ class MetricsOverview(BaseModel):
     frontier_statuses: dict[str, int]
     active_domains: int
     recent_events: list[CrawlEventRead]
+
+
+class CrawlDefinitionCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    schedule_cron: str | None = Field(default=None, max_length=120)
+    schedule_timezone: str = Field(default="UTC", min_length=1, max_length=80)
+    config: CrawlRunCreate
+
+
+class CrawlDefinitionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    description: str | None
+    enabled: bool
+    schedule_cron: str | None
+    schedule_timezone: str
+    next_run_at: datetime | None
+    config: dict[str, object]
+    created_at: datetime
+    updated_at: datetime
+
+
+class PipelineTaskRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    run_id: uuid.UUID
+    frontier_entry_id: uuid.UUID
+    task_type: PipelineTaskType
+    status: PipelineTaskStatus
+    generation: int
+    attempt_count: int
+    max_attempts: int
+    available_at: datetime
+    lease_owner: str | None
+    lease_expires_at: datetime | None
+    last_heartbeat_at: datetime | None
+    payload: dict[str, object]
+    last_error_type: str | None
+    last_error_message: str | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkerRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    worker_id: str
+    queues: list[str]
+    version: str
+    current_task_id: uuid.UUID | None
+    started_at: datetime
+    last_seen_at: datetime
+    details: dict[str, object]
+
+
+class IncidentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    run_id: uuid.UUID | None
+    status: IncidentStatus
+    severity: str
+    incident_type: str
+    title: str
+    details: dict[str, object]
+    acknowledged_at: datetime | None
+    resolved_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class IndexBuildRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    status: IndexBuildStatus
+    schema_version: int
+    physical_index: str | None
+    expected_documents: int
+    indexed_documents: int
+    error_message: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    created_at: datetime
+    updated_at: datetime

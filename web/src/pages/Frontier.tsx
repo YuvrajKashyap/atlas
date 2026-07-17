@@ -47,7 +47,7 @@ export function Frontier() {
         <EmptyState
           title="No active survey"
           detail="Create or select a crawl run before inspecting its frontier."
-          action={{ label: "Open crawl registry", to: "/crawls" }}
+          action={{ label: "Open crawl registry", to: "/console/crawls" }}
         />
       ) : (
         <>

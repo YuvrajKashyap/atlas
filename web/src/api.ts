@@ -1,18 +1,32 @@
 import type {
   CrawlEvent,
+  CrawlDefinition,
   CrawlRun,
   CrawlRunCreate,
   DocumentDetail,
   DocumentSummary,
+  DomainHealth,
   FrontierEntry,
+  IndexBuild,
   MetricsOverview,
+  OperationalIncident,
   Page,
+  PipelineTask,
   SearchResults,
   SystemStatus,
+  WorkerHeartbeat,
 } from "./types";
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ??
-  "http://localhost:8000/api/v1";
+let apiBase: string | null = null;
+
+export function configureApiBase(runtimeBaseUrl: string | null) {
+  if (!runtimeBaseUrl) {
+    apiBase = null;
+    return;
+  }
+  const normalized = runtimeBaseUrl.replace(/\/$/, "");
+  apiBase = normalized.endsWith("/api/v1") ? normalized : `${normalized}/api/v1`;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -25,10 +39,13 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  if (!apiBase) throw new ApiError("The Atlas runtime is offline", 503);
+  const accessToken = sessionStorage.getItem("atlas:access-token");
+  const response = await fetch(`${apiBase}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...init?.headers,
     },
   });
@@ -68,4 +85,44 @@ export const api = {
     return request<SearchResults>(`/search?${params}`);
   },
   system: () => request<SystemStatus>("/system/status"),
+  definitions: () => request<CrawlDefinition[]>("/crawl-definitions"),
+  triggerDefinition: (definitionId: string) =>
+    request<CrawlRun>(`/crawl-definitions/${definitionId}/trigger`, { method: "POST" }),
+  tasks: (runId?: string) => {
+    const params = new URLSearchParams();
+    if (runId) params.set("run_id", runId);
+    return request<PipelineTask[]>(`/operations/tasks?${params}`);
+  },
+  deadLetter: () => request<PipelineTask[]>("/operations/dead-letter"),
+  retryTask: (taskId: string) =>
+    request<PipelineTask>(`/operations/tasks/${taskId}/retry`, { method: "POST" }),
+  workers: () => request<WorkerHeartbeat[]>("/operations/workers"),
+  domainHealth: (runId?: string) => {
+    const params = new URLSearchParams();
+    if (runId) params.set("run_id", runId);
+    return request<DomainHealth[]>(`/operations/domains?${params}`);
+  },
+  incidents: () => request<OperationalIncident[]>("/operations/incidents"),
+  acknowledgeIncident: (incidentId: string) =>
+    request<OperationalIncident>(`/operations/incidents/${incidentId}/acknowledge`, {
+      method: "POST",
+    }),
+  resolveIncident: (incidentId: string) =>
+    request<OperationalIncident>(`/operations/incidents/${incidentId}/resolve`, {
+      method: "POST",
+    }),
+  indexBuilds: () => request<IndexBuild[]>("/operations/index-builds"),
+  createIndexBuild: () =>
+    request<IndexBuild>("/operations/index-builds", { method: "POST" }),
+  documentVersions: (documentId: string) =>
+    request<DocumentSummary[]>(`/documents/${documentId}/versions`),
+  documentDiff: (documentId: string, againstId?: string) => {
+    const params = new URLSearchParams();
+    if (againstId) params.set("against_id", againstId);
+    return request<Record<string, unknown>>(`/documents/${documentId}/diff?${params}`);
+  },
+  reparsePreview: (documentId: string) =>
+    request<Record<string, unknown>>(`/documents/${documentId}/reparse-preview`, {
+      method: "POST",
+    }),
 };

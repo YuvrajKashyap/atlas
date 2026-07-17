@@ -37,7 +37,7 @@ export function CommandCenter() {
         <EmptyState
           title="No survey has been commissioned"
           detail="Create a crawl run to establish a durable frontier and begin collecting telemetry."
-          action={{ label: "Create the first crawl", to: "/crawls" }}
+          action={{ label: "Create the first crawl", to: "/console/crawls" }}
         />
       </div>
     );
@@ -103,7 +103,7 @@ export function CommandCenter() {
               title="URL lifecycle"
               className="frontier-composition"
               action={
-                <Link className="icon-link" to="/frontier" aria-label="Open frontier">
+                <Link className="icon-link" to="/console/frontier" aria-label="Open frontier">
                   <ArrowUpRight size={17} />
                 </Link>
               }

@@ -1,15 +1,14 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlsplit
 
-import httpx
 from protego import Protego
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from atlas.config import Settings
+from atlas.fetcher import FetchNetworkError, FetchTimeoutError, fetch_url
 from atlas.models import CrawlRun, DomainState, FrontierEntry
-from atlas.urls import normalize_url, validate_fetch_target
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +16,7 @@ class RobotsDecision:
     allowed: bool
     reason: str
     crawl_delay_ms: int
+    sitemaps: tuple[str, ...] = ()
 
 
 class RobotsService:
@@ -66,7 +66,10 @@ class RobotsService:
             state.crawl_delay_ms = delay_ms
         allowed = policy.can_fetch(entry.normalized_url, run.user_agent)
         return RobotsDecision(
-            allowed, "robots_allowed" if allowed else "robots_disallowed", delay_ms
+            allowed,
+            "robots_allowed" if allowed else "robots_disallowed",
+            delay_ms,
+            tuple(policy.sitemaps),
         )
 
     def _refresh(
@@ -85,33 +88,22 @@ class RobotsService:
         now = datetime.now(UTC)
 
         try:
-            timeout = httpx.Timeout(run.request_timeout_seconds)
-            current_url = robots_url
-            with httpx.Client(
-                timeout=timeout,
-                follow_redirects=False,
-                headers={"User-Agent": run.user_agent, "Accept": "text/plain,*/*;q=0.1"},
-            ) as client:
-                for redirect_count in range(run.max_redirects + 1):
-                    validated = validate_fetch_target(
-                        current_url,
-                        allowed_domains,
-                        allow_private_networks=self.settings.allow_private_networks,
-                    )
-                    response = client.get(validated.url)
-                    if response.is_redirect:
-                        location = response.headers.get("location")
-                        if not location or redirect_count >= run.max_redirects:
-                            raise RuntimeError("robots redirect policy failed")
-                        current_url = normalize_url(urljoin(validated.url, location))
-                        continue
-                    if len(response.content) > 512_000:
-                        raise RuntimeError("robots response exceeded 512 KB")
-                    state.robots_url = str(response.url)
-                    state.robots_status_code = response.status_code
-                    state.robots_body = response.text if response.status_code < 400 else None
-                    break
-        except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+            response = fetch_url(
+                run,
+                robots_url,
+                allowed_domains,
+                allow_private_networks=self.settings.allow_private_networks,
+                accept="text/plain,*/*;q=0.1",
+                max_response_bytes=512_000,
+            )
+            state.robots_url = response.final_url
+            state.robots_status_code = response.status_code
+            state.robots_body = (
+                response.body.decode("utf-8", errors="replace")
+                if response.status_code < 400
+                else None
+            )
+        except (FetchNetworkError, FetchTimeoutError, RuntimeError, ValueError) as exc:
             state.robots_error = type(exc).__name__
             state.robots_expires_at = now + timedelta(minutes=15)
         else:

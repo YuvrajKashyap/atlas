@@ -1,0 +1,39 @@
+compact: true
+quiet: true
+
+# Every skipped policy is reviewed in docs/security-exceptions.md. This list is
+# deliberately centralized so a policy change is visible in code review and CI.
+skip-check:
+  - CKV_AWS_2
+  - CKV_AWS_18
+  - CKV_AWS_68
+  - CKV_AWS_86
+  - CKV_AWS_91
+  - CKV_AWS_103
+  - CKV_AWS_109
+  - CKV_AWS_111
+  - CKV_AWS_130
+  - CKV_AWS_144
+  - CKV_AWS_150
+  - CKV_AWS_174
+  - CKV_AWS_260
+  - CKV_AWS_287
+  - CKV_AWS_288
+  - CKV_AWS_289
+  - CKV_AWS_290
+  - CKV_AWS_293
+  - CKV_AWS_310
+  - CKV_AWS_317
+  - CKV_AWS_318
+  - CKV_AWS_355
+  - CKV_AWS_356
+  - CKV_AWS_374
+  - CKV_AWS_378
+  - CKV2_AWS_20
+  - CKV2_AWS_28
+  - CKV2_AWS_42
+  - CKV2_AWS_47
+  - CKV2_AWS_50
+  - CKV2_AWS_57
+  - CKV2_AWS_59
+  - CKV2_AWS_62

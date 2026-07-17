@@ -4,10 +4,11 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from atlas.enums import CrawlRunStatus, FrontierStatus
+from atlas.enums import CrawlRunStatus, FrontierStatus, PipelineTaskType
 from atlas.events import emit_event
 from atlas.models import AllowedDomain, CrawlRun, CrawlSeed, Document, FrontierEntry
 from atlas.schemas import AllowedDomainInput, CrawlRunCreate, CrawlRunRead, RunCounters
+from atlas.tasking import create_pipeline_task
 from atlas.urls import (
     UrlPolicyError,
     host_for_url,
@@ -21,7 +22,7 @@ class RunStateError(RuntimeError):
     pass
 
 
-def create_run(session: Session, request: CrawlRunCreate) -> CrawlRun:
+def create_run(session: Session, request: CrawlRunCreate, *, commit: bool = True) -> CrawlRun:
     allowed = [
         (normalize_domain(item.domain), item.include_subdomains) for item in request.allowed_domains
     ]
@@ -48,6 +49,11 @@ def create_run(session: Session, request: CrawlRunCreate) -> CrawlRun:
         max_response_bytes=request.max_response_bytes,
         max_redirects=request.max_redirects,
         max_retries=request.max_retries,
+        max_duration_seconds=request.max_duration_seconds,
+        global_concurrency=request.global_concurrency,
+        per_domain_concurrency=request.per_domain_concurrency,
+        allowed_content_types=request.allowed_content_types,
+        allowed_ports=request.allowed_ports,
         user_agent=request.user_agent,
         config_snapshot=snapshot,
     )
@@ -73,11 +79,12 @@ def create_run(session: Session, request: CrawlRunCreate) -> CrawlRun:
             )
         )
     emit_event(session, run.id, "run.created", payload={"seed_count": len(normalized_seeds)})
-    session.commit()
+    if commit:
+        session.commit()
     return run
 
 
-def start_run(session: Session, run_id: uuid.UUID) -> CrawlRun:
+def start_run(session: Session, run_id: uuid.UUID, *, commit: bool = True) -> CrawlRun:
     run = session.get(CrawlRun, run_id)
     if run is None:
         raise LookupError("Crawl run not found")
@@ -85,8 +92,19 @@ def start_run(session: Session, run_id: uuid.UUID) -> CrawlRun:
         raise RunStateError(f"Only draft runs can start; current status is {run.status.value}")
     run.status = CrawlRunStatus.RUNNING
     run.started_at = datetime.now(UTC)
+    seeds = list(session.scalars(select(FrontierEntry).where(FrontierEntry.run_id == run.id)))
+    for entry in seeds:
+        create_pipeline_task(
+            session,
+            run_id=run.id,
+            frontier_entry_id=entry.id,
+            task_type=PipelineTaskType.FETCH,
+            generation=run.generation,
+            max_attempts=max(1, run.max_retries + 1),
+        )
     emit_event(session, run.id, "run.started")
-    session.commit()
+    if commit:
+        session.commit()
     return run
 
 
@@ -155,6 +173,8 @@ def serialize_run(session: Session, run: CrawlRun) -> CrawlRunRead:
     )
     return CrawlRunRead(
         id=run.id,
+        definition_id=run.definition_id,
+        generation=run.generation,
         name=run.name,
         status=run.status,
         max_pages=run.max_pages,
@@ -164,6 +184,11 @@ def serialize_run(session: Session, run: CrawlRun) -> CrawlRunRead:
         max_response_bytes=run.max_response_bytes,
         max_redirects=run.max_redirects,
         max_retries=run.max_retries,
+        max_duration_seconds=run.max_duration_seconds,
+        global_concurrency=run.global_concurrency,
+        per_domain_concurrency=run.per_domain_concurrency,
+        allowed_content_types=run.allowed_content_types,
+        allowed_ports=run.allowed_ports,
         user_agent=run.user_agent,
         created_at=run.created_at,
         started_at=run.started_at,

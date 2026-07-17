@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, "codex/**"]
   pull_request:
 
 permissions:
@@ -40,7 +40,9 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pyright
-      - run: uv run pytest --cov=atlas --cov-report=term
+      - run: uv run alembic upgrade head
+      - run: uv run pytest --cov=atlas --cov-report=term --cov-report=xml --cov-report=json --cov-fail-under=85
+      - run: uv run python scripts/check_coverage.py coverage.json
       - name: Verify reversible schema migration
         run: |
           uv run alembic upgrade head
@@ -66,6 +68,36 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm build
+      - run: pnpm test
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-failures
+          path: |
+            web/test-results
+            web/playwright-report
+          retention-days: 14
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.8
+      - run: terraform fmt -check -recursive infra/terraform
+      - run: terraform -chdir=infra/terraform/runtime init -backend=false
+      - run: terraform -chdir=infra/terraform/runtime validate
+      - run: terraform -chdir=infra/terraform/bootstrap init -backend=false
+      - run: terraform -chdir=infra/terraform/bootstrap validate
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          config_file: .checkov.yml
+          directory: infra/terraform
+          framework: terraform
+          soft_fail: false
 
   containers:
     runs-on: ubuntu-latest
@@ -73,3 +105,36 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker compose config --quiet
       - run: docker compose build api web
+      - run: docker image tag atlas-api:latest atlas-api:${{ github.sha }} || true
+      - uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: atlas-api:latest
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - uses: anchore/sbom-action@v0
+        with:
+          image: atlas-api:latest
+          artifact-name: atlas-api-${{ github.sha }}.spdx.json
+
+  corpus-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose --profile benchmark up -d --build corpus
+      - run: |
+          for attempt in $(seq 1 20); do
+            echo "corpus attempt $attempt"
+            curl --fail --silent http://localhost:8090/manifest.json > manifest.json && break
+            sleep 2
+          done
+          test "$(jq -r .pageCount manifest.json)" = "10000"
+          test "$(jq -r .crawlTargetCount manifest.json)" = "10006"
+          test "$(curl --silent http://localhost:8090/sitemap.xml | grep -o '<sitemap>' | wc -l)" = "10"
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: raven-actions/actionlint@v2

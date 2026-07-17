@@ -1,63 +1,105 @@
 # Atlas
 
-Atlas is a production-style, domain-restricted crawl, extraction, indexing, and observability platform. It safely turns an allowlisted portion of the public web into an inspectable, searchable corpus.
+Atlas is a durable, policy-aware web crawl, extraction, versioning, and search platform. It is built to answer a harder question than “can a worker download pages?”: **can a crawl remain correct when queues lose notifications, workers disappear, search is unavailable, and the same URL changes over time?**
 
-Atlas is not a scraper script. The system models crawl runs as first-class entities and records the complete lifecycle of every URL: discovery, policy decisions, scheduling, fetching, extraction, deduplication, and indexing.
+The permanent project record is deployed at [atlas-rho-brown.vercel.app](https://atlas-rho-brown.vercel.app). `atlas.yuvrajkashyap.com` is attached to the Vercel project and awaits its Porkbun CNAME.
 
-## System shape
+![Atlas permanent project record](docs/assets/atlas-home.png)
 
-```text
-React/Vite operator console
-            |
-        FastAPI API
-            |
-   PostgreSQL system of record
-       |              |
- frontier scheduler   metrics/events
-       |
-    Redis/RQ
-       |
- crawl worker -> HTML extraction -> link discovery -> OpenSearch
+## System contract
+
+- PostgreSQL is the source of truth for runs, frontier state, stage tasks, leases, observations, versions, incidents, and historical metrics.
+- Redis/RQ transports notifications. Losing Redis cannot lose work.
+- Fetch, extract, and index are separate idempotent stages with opaque lease tokens, heartbeats, bounded retries, and dead-letter state.
+- OpenSearch writes flow through a durable outbox; an index outage does not repeat a network fetch.
+- Raw HTML is encrypted in object storage and can be reprocessed with a new parser without touching the source site.
+- Public fetches enforce allowlists, robots policy, DNS-pinned public addresses, redirect revalidation, ports, content types, byte limits, concurrency, politeness, depth, duration, and page budgets.
+- The Vercel site is permanent. The AWS runtime is expiring and on demand. Missing or invalid runtime state fails closed.
+- Dashboard data comes from persisted records or checked-in benchmark artifacts. Atlas does not render generated telemetry.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  Browser["Vite project record + operator console"] --> Runtime["Vercel /api/runtime + Edge Config"]
+  Browser -->|"OIDC bearer token"| API["FastAPI / ECS"]
+  API --> PG[("PostgreSQL / RDS\nauthoritative state")]
+  Scheduler["Scheduler / ECS"] --> PG
+  PG --> Scheduler
+  Scheduler -. "notification" .-> Redis[("Valkey / ElastiCache")]
+  Redis -. "wake" .-> Workers["Fetch / Extract / Index workers"]
+  Workers --> PG
+  Workers --> S3[("Encrypted S3 raw archive")]
+  Workers --> Search[("Versioned OpenSearch indexes")]
+  Cognito["Cognito viewer/admin roles"] --> Browser
 ```
 
-PostgreSQL is authoritative. Redis transports ephemeral jobs; it is never the only place crawl state exists.
+The repository deliberately keeps one Python package while deploying distinct API, scheduler, and worker processes. That preserves transactional boundaries without creating network boundaries that do not yet buy the system anything.
 
-## Current MVP surfaces
+## Product surfaces
 
-- Create and start isolated crawl runs with seed URLs, domain allowlists, depth limits, page budgets, and politeness delays.
-- Persistent URL frontier with explicit states and retry scheduling.
-- Public-network validation, redirect revalidation, response limits, robots.txt enforcement, and per-domain scheduling.
-- Fetch attempt history, structured crawl events, main-content extraction, link discovery, and content-hash deduplication.
-- Versioned OpenSearch document index with BM25 search, highlighting, filters, and stable aliases.
-- Operator console with Command Center, Crawls, Frontier, Documents, and Search.
-- Real metrics derived from persisted crawl records—no fixtures or decorative chart data.
+The public Vercel layer contains the product overview, architecture, verified benchmark page, documentation, demo status, source status, and runtime status. The authenticated `/console` contains:
 
-## Safety boundary
+- Command Center and real time-series telemetry
+- Crawl definitions, schedules, and immutable runs
+- Frontier and stage-task inspection
+- Document Explorer, version history, duplicate clusters, and parser preview
+- Corpus search with filters, facets, highlights, cursors, and index-version metadata
+- Domain health, workers, dead letters, incidents, and index builds
 
-Atlas only crawls public `http` and `https` pages on explicitly allowlisted domains. It rejects localhost, private networks, credentials in URLs, unsupported schemes, cross-boundary redirects, oversized responses, and non-HTML content. It does not bypass authentication, paywalls, CAPTCHAs, or anti-bot systems.
+## Local development
 
-## Local prerequisites
-
-- Docker Desktop with at least 6 GB available to containers
-- Node.js 24 LTS and pnpm 10 for host-side frontend development
-- Python 3.13 and uv for host-side backend development
-
-Copy `.env.example` to `.env`, then start the complete stack:
+Requirements: Docker Desktop, Python 3.13, [uv](https://docs.astral.sh/uv/), Node.js 24, and pnpm 10.
 
 ```powershell
 Copy-Item .env.example .env
 docker compose up --build
 ```
 
-The services are exposed at:
-
-- Operator console: <http://localhost:4173>
+- Vite console: <http://localhost:4173>
 - FastAPI: <http://localhost:8000>
-- API documentation: <http://localhost:8000/docs>
-- OpenSearch API: <https://localhost:9200> (self-signed locally)
+- OpenAPI: <http://localhost:8000/docs>
+- OpenSearch: <https://localhost:9200>
 
-Host-side development commands are documented in [docs/development.md](docs/development.md).
+Focused host-side checks:
 
-## Architecture decisions
+```powershell
+cd backend
+uv sync --locked --all-groups
+uv run alembic upgrade head
+uv run ruff check .
+uv run pyright
+uv run pytest --cov=atlas
 
-Atlas intentionally starts as a modular monolith with separate runtime processes rather than premature microservices. See [docs/architecture.md](docs/architecture.md), [docs/tradeoffs.md](docs/tradeoffs.md), and [docs/safety.md](docs/safety.md).
+cd ..\web
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm build
+pnpm test
+pnpm test:e2e
+```
+
+## On-demand AWS demonstration
+
+The protected **launch Atlas runtime** GitHub workflow requires an explicit expiration and an Infracost ceiling before creating resources. It then builds an immutable ECR image, applies either the `showcase` or `production` Terraform profile, verifies Cognito enforcement, completes a controlled crawl, and publishes `online` to Edge Config.
+
+The protected **destroy Atlas runtime** workflow stops new work, drains leases, exports real run evidence, publishes `offline`, destroys Terraform resources, deletes the versioned state bucket, and fails if active Atlas-tagged resources remain. A scheduled workflow dispatches teardown when the public lease expires.
+
+No AWS apply has been run from this checkout because AWS credentials are not configured. Infrastructure code is validated, but a release is not complete until the live recovery and cleanup gates pass.
+
+## Engineering record
+
+- [Architecture](docs/architecture.md)
+- [Threat model](docs/threat-model.md)
+- [Infrastructure security exceptions](docs/security-exceptions.md)
+- [Service-level objectives](docs/slos.md)
+- [Benchmark methodology](docs/benchmark.md)
+- [Release checklist](docs/release-checklist.md)
+- [Launch runbook](docs/runbooks/launch.md)
+- [Teardown runbook](docs/runbooks/teardown.md)
+- [Incident and recovery runbook](docs/runbooks/incident-recovery.md)
+- [Architecture decisions](docs/adr/)
+
+## Current release status
+
+The permanent Vercel site and Edge Config contract are live and verified in the intentional `offline` state. The backend has 69 passing tests, 91.03% overall coverage, and at least 90% coverage in every critical pipeline module. Terraform validates and Checkov reports zero failures. The remaining hard gates are tracked openly: the deterministic 10,000-page recovery benchmark has not yet produced a publishable artifact, an authenticated live-console journey and AWS recovery/teardown have not run, the public repository is not yet published, and the demo recording is pending that verified release.

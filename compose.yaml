@@ -65,7 +65,7 @@ services:
       OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:-Atlas-local-2026!}
       ATLAS_RAW_STORE_PATH: /var/lib/atlas/raw
       ATLAS_CORS_ORIGINS: '["http://localhost:4173","http://localhost:5173"]'
-      ATLAS_ALLOW_PRIVATE_NETWORKS: "false"
+      ATLAS_ALLOW_PRIVATE_NETWORKS: ${ATLAS_ALLOW_PRIVATE_NETWORKS:-false}
       ATLAS_LOG_LEVEL: INFO
     ports:
       - "8000:8000"
@@ -116,6 +116,18 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  corpus:
+    profiles: ["benchmark"]
+    build:
+      context: ./benchmark/corpus
+    ports:
+      - "8090:80"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost/manifest.json')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   postgres-data:

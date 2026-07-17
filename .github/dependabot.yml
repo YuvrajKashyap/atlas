@@ -22,3 +22,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  - package-ecosystem: terraform
+    directory: /infra/terraform/runtime
+    schedule:
+      interval: weekly
+  - package-ecosystem: terraform
+    directory: /infra/terraform/bootstrap
+    schedule:
+      interval: weekly

@@ -6,6 +6,7 @@ from sqlalchemy import func, or_, select
 from atlas.api.dependencies import DbSession
 from atlas.enums import FrontierStatus
 from atlas.models import FetchAttempt, FrontierEntry
+from atlas.pagination import decode_cursor, encode_cursor
 from atlas.schemas import FetchAttemptRead, FrontierEntryRead
 from atlas.services.runs import get_run_or_raise
 
@@ -19,6 +20,7 @@ def list_frontier(
     status: FrontierStatus | None = None,
     host: str | None = None,
     query: str | None = None,
+    cursor: str | None = Query(default=None, max_length=1000),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
 ) -> dict[str, object]:
@@ -36,19 +38,34 @@ def list_frontier(
             )
         )
     total = session.scalar(select(func.count()).select_from(FrontierEntry).where(*filters)) or 0
+    statement = select(FrontierEntry).where(*filters)
+    if cursor:
+        cursor_time, cursor_id = decode_cursor(cursor)
+        statement = statement.where(
+            or_(
+                FrontierEntry.created_at < cursor_time,
+                (FrontierEntry.created_at == cursor_time) & (FrontierEntry.id < cursor_id),
+            )
+        )
+    elif page > 1:
+        statement = statement.offset((page - 1) * page_size)
     entries = list(
         session.scalars(
-            select(FrontierEntry)
-            .where(*filters)
-            .order_by(FrontierEntry.created_at.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
+            statement.order_by(FrontierEntry.created_at.desc(), FrontierEntry.id.desc()).limit(
+                page_size + 1
+            )
         )
+    )
+    has_more = len(entries) > page_size
+    entries = entries[:page_size]
+    next_cursor = (
+        encode_cursor(entries[-1].created_at, entries[-1].id) if has_more and entries else None
     )
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
+        "next_cursor": next_cursor,
         "items": [
             FrontierEntryRead.model_validate(entry).model_dump(mode="json") for entry in entries
         ],

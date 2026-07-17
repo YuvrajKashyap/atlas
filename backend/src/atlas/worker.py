@@ -16,9 +16,13 @@ from atlas.logging import configure_logging
 def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
-    redis = Redis.from_url(settings.redis_url)
-    queue = Queue("atlas-fetch", connection=redis)
-    worker = PlatformWorker([queue], connection=redis, name=f"atlas-worker-{os.getpid()}")
+    redis = Redis.from_url(settings.redis_url, password=settings.redis_password or None)
+    queues = [
+        Queue("atlas-fetch", connection=redis),
+        Queue("atlas-extract", connection=redis),
+        Queue("atlas-index", connection=redis),
+    ]
+    worker = PlatformWorker(queues, connection=redis, name=f"atlas-worker-{os.getpid()}")
     structlog.get_logger(__name__).info("worker_started", worker_class=PlatformWorker.__name__)
     worker.work(logging_level=settings.log_level)
 

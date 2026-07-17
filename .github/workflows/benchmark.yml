@@ -1,0 +1,121 @@
+name: deterministic benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      DATABASE_URL: postgresql+psycopg://atlas:atlas-local-password@localhost:5433/atlas
+      OPENSEARCH_URL: https://localhost:9200
+      OPENSEARCH_USERNAME: admin
+      OPENSEARCH_PASSWORD: Atlas-local-2026!
+      ATLAS_ALLOW_PRIVATE_NETWORKS: "true"
+      ATLAS_CORPUS_URL: http://localhost:8090
+      ATLAS_FAULT_SCENARIOS: duplicate-delivery,worker-termination,expired-leases,redis-loss,opensearch-outage,postgres-reconnect,redirects,malformed-html,robots-exclusion,oversized-response
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.6"
+      - name: Start real dependencies and deterministic corpus
+        run: docker compose --profile benchmark up -d --build postgres redis opensearch corpus api scheduler worker
+      - name: Wait for API
+        run: |
+          for attempt in $(seq 1 90); do
+            echo "health attempt $attempt"
+            curl --fail --silent http://localhost:8000/health && exit 0
+            sleep 5
+          done
+          docker compose logs
+          exit 1
+      - name: Start benchmark run
+        id: run
+        run: echo "run_id=$(node scripts/benchmark.mjs start)" >> "$GITHUB_OUTPUT"
+      - name: Inject recoverable infrastructure failures
+        run: |
+          mkdir -p artifacts
+          (
+            sleep 30
+            docker compose exec -T api python - <<'PY'
+          import time
+          import uuid
+          from redis import Redis
+          from rq import Queue
+          from sqlalchemy import select
+          from atlas.config import get_settings
+          from atlas.db import SessionLocal
+          from atlas.enums import PipelineTaskStatus
+          from atlas.models import PipelineTask
+          from atlas.tasking import TASK_QUEUES
+
+          for _ in range(30):
+              with SessionLocal() as session:
+                  task = session.scalar(
+                      select(PipelineTask)
+                      .where(PipelineTask.status == PipelineTaskStatus.LEASED)
+                      .limit(1)
+                  )
+                  if task is not None and task.lease_token is not None:
+                      settings = get_settings()
+                      Queue(
+                          TASK_QUEUES[task.task_type],
+                          connection=Redis.from_url(
+                              settings.redis_url,
+                              password=settings.redis_password or None,
+                          ),
+                      ).enqueue(
+                          "atlas.jobs.process_pipeline_task",
+                          str(task.id),
+                          str(task.lease_token),
+                          job_id=f"duplicate-{uuid.uuid4()}",
+                          job_timeout=300,
+                      )
+                      break
+              time.sleep(1)
+          else:
+              raise SystemExit("could not find a leased task for duplicate delivery")
+          PY
+            docker compose kill worker
+            sleep 10
+            docker compose up -d worker
+            docker compose exec -T redis redis-cli FLUSHALL
+            docker compose restart scheduler
+            sleep 30
+            docker compose stop opensearch
+            sleep 20
+            docker compose start opensearch
+            sleep 30
+            docker compose stop postgres
+            sleep 10
+            docker compose start postgres
+          ) > artifacts/fault-injection.log 2>&1 && touch artifacts/fault-injection.complete &
+          echo $! > artifacts/fault-injection.pid
+      - name: Wait for recovery run
+        run: node scripts/benchmark.mjs wait "${{ steps.run.outputs.run_id }}"
+      - name: Verify fault injection completed
+        run: test -f artifacts/fault-injection.complete
+      - name: Verify database and search invariants
+        working-directory: backend
+        run: |
+          uv sync --locked --all-groups
+          uv run python scripts/verify_benchmark.py "${{ steps.run.outputs.run_id }}"
+      - name: Capture diagnostics
+        if: failure()
+        run: docker compose logs --no-color > artifacts/compose.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: atlas-verified-benchmark-${{ github.sha }}
+          path: |
+            artifacts
+            web/public/benchmarks/latest.json
+          retention-days: 90
+      - name: Stop benchmark infrastructure
+        if: always()
+        run: docker compose --profile benchmark down -v --remove-orphans

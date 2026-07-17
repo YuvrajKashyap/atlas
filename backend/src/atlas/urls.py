@@ -104,6 +104,7 @@ def validate_fetch_target(
     allowed_domains: list[tuple[str, bool]],
     *,
     allow_private_networks: bool = False,
+    allowed_ports: set[int] | None = None,
 ) -> ValidatedTarget:
     normalized = normalize_url(url)
     host = host_for_url(normalized)
@@ -115,6 +116,9 @@ def validate_fetch_target(
         raise UrlPolicyError("URL host is outside the crawl allowlist")
 
     port = urlsplit(normalized).port or (443 if normalized.startswith("https://") else 80)
+    permitted_ports = allowed_ports or {80, 443}
+    if port not in permitted_ports:
+        raise UrlPolicyError(f"Destination port is not allowed: {port}")
     try:
         records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:

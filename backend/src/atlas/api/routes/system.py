@@ -16,7 +16,9 @@ def system_status(session: DbSession) -> dict[str, object]:
     settings = get_settings()
     session.execute(text("SELECT 1"))
     try:
-        redis_ok = bool(Redis.from_url(settings.redis_url).ping())
+        redis_ok = bool(
+            Redis.from_url(settings.redis_url, password=settings.redis_password or None).ping()
+        )
     except RedisError:
         redis_ok = False
     try:

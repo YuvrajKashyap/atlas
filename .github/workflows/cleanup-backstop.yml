@@ -1,0 +1,33 @@
+name: Atlas expiration backstop
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERCEL_API_TOKEN: ${{ secrets.VERCEL_API_TOKEN }}
+      VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
+      EDGE_CONFIG_ID: ${{ secrets.EDGE_CONFIG_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dispatch teardown when the public lease expires
+        run: |
+          node scripts/edge-config.mjs get > runtime.json
+          state="$(jq -r '.state' runtime.json)"
+          expires="$(jq -r '.demoExpiresAt // empty' runtime.json)"
+          environment="$(jq -r '.environmentId // empty' runtime.json)"
+          [[ -n "$expires" && -n "$environment" ]] || exit 0
+          if [[ "$state" != "offline" && "$(date -u -d "$expires" +%s)" -le "$(date -u +%s)" ]]; then
+            profile="${environment%%-*}"
+            [[ "$profile" == "production" ]] || profile="showcase"
+            gh workflow run destroy-runtime.yml -f environment_id="$environment" -f profile="$profile"
+          fi

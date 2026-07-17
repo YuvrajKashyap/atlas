@@ -36,6 +36,59 @@ class FetchOutcome(StrEnum):
     UNSUPPORTED_CONTENT = "unsupported_content"
 
 
+class PipelineTaskType(StrEnum):
+    FETCH = "fetch"
+    EXTRACT = "extract"
+    INDEX = "index"
+
+
+class PipelineTaskStatus(StrEnum):
+    READY = "ready"
+    LEASED = "leased"
+    RETRY_SCHEDULED = "retry_scheduled"
+    SUCCEEDED = "succeeded"
+    DEAD_LETTERED = "dead_lettered"
+    CANCELLED = "cancelled"
+
+
+class ChangeKind(StrEnum):
+    INITIAL = "initial"
+    UNCHANGED = "unchanged"
+    METADATA_ONLY = "metadata_only"
+    MINOR = "minor"
+    SUBSTANTIAL = "substantial"
+
+
+class ObservationOutcome(StrEnum):
+    FETCHED = "fetched"
+    NOT_MODIFIED = "not_modified"
+    FAILED = "failed"
+    ROBOTS_BLOCKED = "robots_blocked"
+
+
+class IndexOperationStatus(StrEnum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    SUCCEEDED = "succeeded"
+    RETRY_SCHEDULED = "retry_scheduled"
+    DEAD_LETTERED = "dead_lettered"
+
+
+class IndexBuildStatus(StrEnum):
+    PENDING = "pending"
+    BUILDING = "building"
+    VERIFYING = "verifying"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    ROLLED_BACK = "rolled_back"
+
+
+class IncidentStatus(StrEnum):
+    OPEN = "open"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
+
+
 TERMINAL_FRONTIER_STATUSES = {
     FrontierStatus.INDEXED,
     FrontierStatus.ROBOTS_BLOCKED,

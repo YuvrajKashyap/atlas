@@ -1,13 +1,20 @@
 import {
   Activity,
+  AlertTriangle,
   BookOpenText,
+  CalendarClock,
   DatabaseZap,
+  FileCode2,
   FileSearch,
   Globe2,
+  HardDrive,
+  House,
   ListTree,
   Menu,
   Orbit,
+  PanelsTopLeft,
   Search,
+  ServerCog,
   X,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -17,11 +24,18 @@ import { useRunScope } from "../state/run-scope";
 import { StatusChip } from "./primitives";
 
 const navItems = [
-  { to: "/", label: "Command center", icon: Activity },
-  { to: "/crawls", label: "Crawl runs", icon: Orbit },
-  { to: "/frontier", label: "Frontier", icon: ListTree },
-  { to: "/documents", label: "Documents", icon: BookOpenText },
-  { to: "/search", label: "Corpus search", icon: Search },
+  { to: "/console", label: "Command center", icon: Activity },
+  { to: "/console/crawls", label: "Crawl runs", icon: Orbit },
+  { to: "/console/definitions", label: "Definitions", icon: CalendarClock },
+  { to: "/console/frontier", label: "Frontier", icon: ListTree },
+  { to: "/console/documents", label: "Documents", icon: BookOpenText },
+  { to: "/console/search", label: "Corpus search", icon: Search },
+  { to: "/console/parsers", label: "Parser debugger", icon: FileCode2 },
+  { to: "/console/domains", label: "Domain health", icon: Globe2 },
+  { to: "/console/tasks", label: "Tasks & dead letters", icon: PanelsTopLeft },
+  { to: "/console/workers", label: "Workers", icon: ServerCog },
+  { to: "/console/index", label: "Index & freshness", icon: HardDrive },
+  { to: "/console/incidents", label: "Incidents", icon: AlertTriangle },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -74,7 +88,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <NavLink
               key={to}
               to={to}
-              end={to === "/"}
+              end={to === "/console"}
               onClick={() => setMobileOpen(false)}
               className={({ isActive }) => (isActive ? "nav-item active" : "nav-item")}
             >
@@ -85,6 +99,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="sidebar-footer">
+          <NavLink className="system-line console-home-link" to="/">
+            <House size={15} />
+            <span>Project overview</span>
+          </NavLink>
           <div className="system-line">
             <DatabaseZap size={15} />
             <span>Persisted telemetry</span>
@@ -93,7 +111,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <FileSearch size={15} />
             <span>No simulated records</span>
           </div>
-          <span className="build-label">BUILD / 0.1.0</span>
+          <span className="build-label">BUILD / 0.2.0-PRODUCTION</span>
         </div>
       </aside>
       {mobileOpen ? (

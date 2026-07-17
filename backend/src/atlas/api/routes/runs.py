@@ -1,9 +1,12 @@
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import select
 
 from atlas.api.dependencies import DbSession
+from atlas.audit import record_audit
+from atlas.auth import Principal, require_admin
 from atlas.models import CrawlEvent, CrawlRun
 from atlas.schemas import CrawlEventRead, CrawlRunCreate, CrawlRunRead
 from atlas.services.runs import (
@@ -18,8 +21,14 @@ router = APIRouter(prefix="/crawl-runs", tags=["crawl-runs"])
 
 
 @router.post("", response_model=CrawlRunRead, status_code=status.HTTP_201_CREATED)
-def create_crawl_run(request: CrawlRunCreate, session: DbSession) -> CrawlRunRead:
+def create_crawl_run(
+    request: CrawlRunCreate,
+    session: DbSession,
+    principal: Annotated[Principal, Depends(require_admin)],
+) -> CrawlRunRead:
     run = create_run(session, request)
+    record_audit(session, principal, "crawl_run.create", "crawl_run", str(run.id))
+    session.commit()
     return serialize_run(session, run)
 
 
@@ -38,13 +47,27 @@ def get_crawl_run(run_id: uuid.UUID, session: DbSession) -> CrawlRunRead:
 
 
 @router.post("/{run_id}/start", response_model=CrawlRunRead)
-def start_crawl_run(run_id: uuid.UUID, session: DbSession) -> CrawlRunRead:
-    return serialize_run(session, start_run(session, run_id))
+def start_crawl_run(
+    run_id: uuid.UUID,
+    session: DbSession,
+    principal: Annotated[Principal, Depends(require_admin)],
+) -> CrawlRunRead:
+    run = start_run(session, run_id)
+    record_audit(session, principal, "crawl_run.start", "crawl_run", str(run.id))
+    session.commit()
+    return serialize_run(session, run)
 
 
 @router.post("/{run_id}/stop", response_model=CrawlRunRead)
-def stop_crawl_run(run_id: uuid.UUID, session: DbSession) -> CrawlRunRead:
-    return serialize_run(session, stop_run(session, run_id))
+def stop_crawl_run(
+    run_id: uuid.UUID,
+    session: DbSession,
+    principal: Annotated[Principal, Depends(require_admin)],
+) -> CrawlRunRead:
+    run = stop_run(session, run_id)
+    record_audit(session, principal, "crawl_run.stop", "crawl_run", str(run.id))
+    session.commit()
+    return serialize_run(session, run)
 
 
 @router.get("/{run_id}/events", response_model=list[CrawlEventRead])

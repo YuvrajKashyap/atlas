@@ -15,7 +15,8 @@ RUN uv sync --locked --no-dev --no-install-project
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY src ./src
-RUN uv sync --locked --no-dev
+RUN uv sync --locked --no-dev \
+    && rm -f /bin/uv /bin/uvx
 
 ENV PATH="/app/.venv/bin:$PATH"
 

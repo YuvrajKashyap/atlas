@@ -6,6 +6,8 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .coverage
+coverage.json
+coverage.xml
 htmlcov/
 .venv/
 
@@ -14,16 +16,31 @@ node_modules/
 dist/
 .vite/
 coverage/
+playwright-report/
+test-results/
 
 # Environment and runtime data
 .env
 data/raw/
+backend/data/
 data/opensearch/
 *.log
 browser-*.png
+
+# Terraform local state and provider cache
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
 
 # Editors and OS
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
+
+.vercel

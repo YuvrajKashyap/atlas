@@ -1,0 +1,211 @@
+name: launch Atlas runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Infrastructure profile
+        required: true
+        type: choice
+        options: [showcase, production]
+        default: showcase
+      duration_hours:
+        description: Required lifetime in hours (showcase max 8, production max 24)
+        required: true
+        default: "4"
+      cost_ceiling_usd:
+        description: Maximum accepted prorated estimate for this deployment
+        required: true
+        default: "15"
+      environment_id:
+        description: Optional lowercase environment ID
+        required: false
+      demo_user_email:
+        description: Cognito administrator email used by the smoke test
+        required: true
+
+concurrency:
+  group: atlas-runtime
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  launch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: atlas-showcase
+    env:
+      AWS_REGION: us-east-1
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      VERCEL_API_TOKEN: ${{ secrets.VERCEL_API_TOKEN }}
+      VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
+      EDGE_CONFIG_ID: ${{ secrets.EDGE_CONFIG_ID }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive bounded deployment metadata
+        env:
+          REQUESTED_ID: ${{ inputs.environment_id }}
+          PROFILE: ${{ inputs.profile }}
+          DURATION: ${{ inputs.duration_hours }}
+          BUDGET_EMAIL: ${{ secrets.ATLAS_BUDGET_EMAIL }}
+        run: |
+          [[ "$DURATION" =~ ^[0-9]+$ ]] || { echo "duration_hours must be an integer"; exit 1; }
+          max=8; [[ "$PROFILE" == "production" ]] && max=24
+          (( DURATION >= 1 && DURATION <= max )) || { echo "duration must be between 1 and $max hours"; exit 1; }
+          if [[ -n "$REQUESTED_ID" ]]; then environment="$REQUESTED_ID"; else environment="${PROFILE}-${GITHUB_RUN_ID}"; fi
+          [[ "$environment" =~ ^[a-z][a-z0-9-]{2,30}$ ]] || { echo "invalid environment_id"; exit 1; }
+          [[ -n "$BUDGET_EMAIL" ]] || { echo "ATLAS_BUDGET_EMAIL secret is required"; exit 1; }
+          expires_at="$(date -u -d "+${DURATION} hours" +%Y-%m-%dT%H:%M:%SZ)"
+          {
+            echo "ENVIRONMENT_ID=$environment"
+            echo "EXPIRES_AT=$expires_at"
+            echo "TF_VAR_environment_id=$environment"
+            echo "TF_VAR_deployment_profile=$PROFILE"
+            echo "TF_VAR_expires_at=$expires_at"
+            echo "TF_VAR_budget_email=$BUDGET_EMAIL"
+            echo "TF_VAR_container_image=bootstrap.invalid/atlas:plan"
+          } >> "$GITHUB_ENV"
+
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create disposable encrypted state bucket
+        run: |
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          state_bucket="atlas-tf-${account_id}-${ENVIRONMENT_ID}"
+          aws s3api head-bucket --bucket "$state_bucket" 2>/dev/null || aws s3api create-bucket --bucket "$state_bucket" --region "$AWS_REGION"
+          aws s3api put-bucket-versioning --bucket "$state_bucket" --versioning-configuration Status=Enabled
+          aws s3api put-bucket-encryption --bucket "$state_bucket" --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+          aws s3api put-public-access-block --bucket "$state_bucket" --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+          echo "STATE_BUCKET=$state_bucket" >> "$GITHUB_ENV"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.8
+
+      - name: Initialize and create reviewed plan
+        working-directory: infra/terraform/runtime
+        run: |
+          terraform init -reconfigure -backend-config="bucket=$STATE_BUCKET" -backend-config="key=runtime.tfstate" -backend-config="region=$AWS_REGION"
+          terraform plan -var-file="profiles/${{ inputs.profile }}.tfvars" -out=atlas.tfplan
+          terraform show -json atlas.tfplan > atlas.tfplan.json
+
+      - uses: infracost/actions/setup@v3
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+      - name: Produce and enforce cost estimate before AWS creation
+        working-directory: infra/terraform/runtime
+        env:
+          DURATION: ${{ inputs.duration_hours }}
+          COST_CEILING: ${{ inputs.cost_ceiling_usd }}
+        run: |
+          infracost breakdown --path atlas.tfplan.json --format json --out-file infracost.json
+          infracost output --path infracost.json --format table
+          monthly="$(jq -r '.totalMonthlyCost' infracost.json)"
+          # Keep JavaScript template interpolation away from the shell.
+          # shellcheck disable=SC2016
+          node -e 'const [monthly,hours,ceiling]=process.argv.slice(1).map(Number); const estimate=monthly/730*hours; console.log(`Prorated estimate: $${estimate.toFixed(2)}`); if (!Number.isFinite(estimate) || estimate > ceiling) process.exit(1)' "$monthly" "$DURATION" "$COST_CEILING"
+
+      - name: Publish starting state
+        run: node scripts/edge-config.mjs set starting "" "$ENVIRONMENT_ID" "$EXPIRES_AT" "Atlas is provisioning an expiring AWS runtime."
+
+      - name: Create ECR repository and publish immutable application image
+        working-directory: infra/terraform/runtime
+        run: |
+          terraform apply -auto-approve -target=aws_ecr_repository.atlas -var-file="profiles/${{ inputs.profile }}.tfvars"
+          repository="$(terraform output -raw ecr_repository_url)"
+          registry="${repository%%/*}"
+          tag="sha-${GITHUB_SHA::12}"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
+          docker build --pull --tag "$repository:$tag" ../../../backend
+          docker push "$repository:$tag"
+          echo "TF_VAR_container_image=$repository:$tag" >> "$GITHUB_ENV"
+
+      - name: Apply complete runtime
+        working-directory: infra/terraform/runtime
+        run: terraform apply -auto-approve -var-file="profiles/${{ inputs.profile }}.tfvars"
+
+      - name: Wait for migrations and service stability
+        working-directory: infra/terraform/runtime
+        run: |
+          cluster="$(terraform output -raw cluster_name)"
+          aws ecs wait services-stable --cluster "$cluster" --services api scheduler worker
+          api_base="$(terraform output -raw api_base_url)"
+          user_pool="$(terraform output -raw cognito_user_pool_id)"
+          client_id="$(terraform output -raw cognito_client_id)"
+          {
+            echo "ATLAS_API_BASE_URL=$api_base"
+            echo "COGNITO_USER_POOL_ID=$user_pool"
+            echo "COGNITO_CLIENT_ID=$client_id"
+          } >> "$GITHUB_ENV"
+
+      - name: Provision the ephemeral administrator and acquire an ID token
+        env:
+          DEMO_EMAIL: ${{ inputs.demo_user_email }}
+          DEMO_PASSWORD: ${{ secrets.ATLAS_DEMO_PASSWORD }}
+        run: |
+          [[ -n "$DEMO_PASSWORD" ]] || { echo "ATLAS_DEMO_PASSWORD secret is required"; exit 1; }
+          aws cognito-idp admin-get-user --user-pool-id "$COGNITO_USER_POOL_ID" --username "$DEMO_EMAIL" >/dev/null 2>&1 || \
+            aws cognito-idp admin-create-user --user-pool-id "$COGNITO_USER_POOL_ID" --username "$DEMO_EMAIL" --message-action SUPPRESS >/dev/null
+          aws cognito-idp admin-set-user-password --user-pool-id "$COGNITO_USER_POOL_ID" --username "$DEMO_EMAIL" --password "$DEMO_PASSWORD" --permanent
+          aws cognito-idp admin-add-user-to-group --user-pool-id "$COGNITO_USER_POOL_ID" --username "$DEMO_EMAIL" --group-name admin
+          auth_json="$(jq -n --arg client "$COGNITO_CLIENT_ID" --arg user "$DEMO_EMAIL" --arg password "$DEMO_PASSWORD" '{AuthFlow:"USER_PASSWORD_AUTH",ClientId:$client,AuthParameters:{USERNAME:$user,PASSWORD:$password}}')"
+          token="$(aws cognito-idp initiate-auth --cli-input-json "$auth_json" --query AuthenticationResult.IdToken --output text)"
+          echo "::add-mask::$token"
+          echo "ATLAS_ID_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Run authentication and controlled-crawl release gates
+        run: node scripts/smoke-test.mjs
+
+      - name: Publish verified online state
+        run: node scripts/edge-config.mjs set online "$ATLAS_API_BASE_URL" "$ENVIRONMENT_ID" "$EXPIRES_AT" "Atlas is online for a time-bounded, authenticated demonstration."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atlas-launch-${{ env.ENVIRONMENT_ID }}
+          path: |
+            artifacts/smoke-run.json
+            infra/terraform/runtime/infracost.json
+          retention-days: 30
+
+      - name: Record operator handoff
+        run: |
+          {
+            echo "### Atlas runtime online"
+            echo "- Environment: \`$ENVIRONMENT_ID\`"
+            echo "- API: $ATLAS_API_BASE_URL"
+            echo "- Automatic expiration: $EXPIRES_AT"
+            echo "- Teardown: run the **destroy Atlas runtime** workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail closed after an unsuccessful launch
+        if: failure()
+        continue-on-error: true
+        run: node scripts/edge-config.mjs set degraded "" "$ENVIRONMENT_ID" "$EXPIRES_AT" "Runtime launch failed verification and product actions remain locked."
+
+      - name: Roll back cost-bearing resources after a failed launch
+        if: failure() && env.STATE_BUCKET != ''
+        continue-on-error: true
+        working-directory: infra/terraform/runtime
+        run: terraform destroy -auto-approve -var-file="profiles/${{ inputs.profile }}.tfvars"
+
+      - name: Remove failed-launch state storage
+        if: failure() && env.STATE_BUCKET != ''
+        continue-on-error: true
+        run: bash scripts/empty-versioned-bucket.sh "$STATE_BUCKET"
+
+      - name: Return public status to offline after rollback
+        if: failure()
+        continue-on-error: true
+        run: node scripts/edge-config.mjs set offline "" "" "" "The live crawler is parked after a failed launch."

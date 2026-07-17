@@ -1,0 +1,113 @@
+name: destroy Atlas runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment_id:
+        description: Exact runtime environment ID
+        required: true
+      profile:
+        description: Infrastructure profile used at launch
+        required: true
+        type: choice
+        options: [showcase, production]
+        default: showcase
+      demo_user_email:
+        description: Cognito administrator email for drain and evidence export
+        required: false
+
+concurrency:
+  group: atlas-runtime
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: atlas-showcase
+    env:
+      AWS_REGION: us-east-1
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      ENVIRONMENT_ID: ${{ inputs.environment_id }}
+      TF_VAR_environment_id: ${{ inputs.environment_id }}
+      TF_VAR_deployment_profile: ${{ inputs.profile }}
+      TF_VAR_expires_at: "2000-01-01T00:00:00Z"
+      TF_VAR_budget_email: ${{ secrets.ATLAS_BUDGET_EMAIL }}
+      TF_VAR_container_image: "destroy.invalid/atlas:destroy"
+      VERCEL_API_TOKEN: ${{ secrets.VERCEL_API_TOKEN }}
+      VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
+      EDGE_CONFIG_ID: ${{ secrets.EDGE_CONFIG_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.8
+
+      - name: Locate state and runtime
+        working-directory: infra/terraform/runtime
+        run: |
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          state_bucket="atlas-tf-${account_id}-${ENVIRONMENT_ID}"
+          terraform init -reconfigure -backend-config="bucket=$state_bucket" -backend-config="key=runtime.tfstate" -backend-config="region=$AWS_REGION"
+          {
+            echo "STATE_BUCKET=$state_bucket"
+            echo "ATLAS_API_BASE_URL=$(terraform output -raw api_base_url)"
+            echo "COGNITO_USER_POOL_ID=$(terraform output -raw cognito_user_pool_id)"
+            echo "COGNITO_CLIENT_ID=$(terraform output -raw cognito_client_id)"
+            echo "CLUSTER_NAME=$(terraform output -raw cluster_name)"
+          } >> "$GITHUB_ENV"
+
+      - name: Publish stopping state
+        run: node scripts/edge-config.mjs set stopping "$ATLAS_API_BASE_URL" "$ENVIRONMENT_ID" "" "Atlas is draining work and exporting release evidence."
+
+      - name: Authenticate operator
+        if: inputs.demo_user_email != ''
+        env:
+          DEMO_EMAIL: ${{ inputs.demo_user_email }}
+          DEMO_PASSWORD: ${{ secrets.ATLAS_DEMO_PASSWORD }}
+        run: |
+          auth_json="$(jq -n --arg client "$COGNITO_CLIENT_ID" --arg user "$DEMO_EMAIL" --arg password "$DEMO_PASSWORD" '{AuthFlow:"USER_PASSWORD_AUTH",ClientId:$client,AuthParameters:{USERNAME:$user,PASSWORD:$password}}')"
+          token="$(aws cognito-idp initiate-auth --cli-input-json "$auth_json" --query AuthenticationResult.IdToken --output text)"
+          echo "::add-mask::$token"
+          echo "ATLAS_ID_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Drain active work and export evidence
+        if: env.ATLAS_ID_TOKEN != ''
+        run: |
+          node scripts/drain-runtime.mjs
+          node scripts/export-runtime-evidence.mjs
+
+      - name: Stop ECS capacity
+        run: |
+          for service in api scheduler worker; do aws ecs update-service --cluster "$CLUSTER_NAME" --service "$service" --desired-count 0 >/dev/null; done
+          aws ecs wait services-stable --cluster "$CLUSTER_NAME" --services api scheduler worker
+
+      - name: Fail public product closed before destruction
+        run: node scripts/edge-config.mjs set offline "" "" "" "The live crawler is parked. The permanent project record remains available."
+
+      - name: Destroy all Terraform-managed resources
+        working-directory: infra/terraform/runtime
+        run: terraform destroy -auto-approve -var-file="profiles/${{ inputs.profile }}.tfvars"
+
+      - name: Delete the versioned Terraform state bucket
+        run: bash scripts/empty-versioned-bucket.sh "$STATE_BUCKET"
+
+      - name: Prove no active tagged resources remain
+        run: bash scripts/verify-cleanup.sh "$ENVIRONMENT_ID"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: atlas-teardown-${{ inputs.environment_id }}
+          path: artifacts/
+          if-no-files-found: ignore
+          retention-days: 90
