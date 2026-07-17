@@ -36,7 +36,10 @@ jobs:
           exit 1
       - name: Start benchmark run
         id: run
-        run: echo "run_id=$(node scripts/benchmark.mjs start)" >> "$GITHUB_OUTPUT"
+        run: |
+          run_id="$(node scripts/benchmark.mjs start)"
+          test -n "$run_id"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
       - name: Inject recoverable infrastructure failures
         run: |
           mkdir -p artifacts

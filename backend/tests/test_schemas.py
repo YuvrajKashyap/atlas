@@ -17,6 +17,27 @@ def test_run_configuration_accepts_safe_bounded_values() -> None:
     assert request.per_domain_delay_ms == 1000
 
 
+def test_run_configuration_accepts_benchmark_attempt_budget() -> None:
+    request = CrawlRunCreate(
+        name="Deterministic benchmark",
+        seeds=["https://example.com"],
+        allowed_domains=[AllowedDomainInput(domain="example.com")],
+        max_pages=10_020,
+    )
+
+    assert request.max_pages == 10_020
+
+
+def test_run_configuration_rejects_excessive_page_budget() -> None:
+    with pytest.raises(ValidationError):
+        CrawlRunCreate(
+            name="Unbounded crawl",
+            seeds=["https://example.com"],
+            allowed_domains=[AllowedDomainInput(domain="example.com")],
+            max_pages=100_001,
+        )
+
+
 def test_run_configuration_rejects_duplicate_seeds() -> None:
     with pytest.raises(ValidationError, match="Seed URLs must be unique"):
         CrawlRunCreate(

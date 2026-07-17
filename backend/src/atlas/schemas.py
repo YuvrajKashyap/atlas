@@ -24,7 +24,7 @@ class CrawlRunCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     seeds: list[str] = Field(min_length=1, max_length=20)
     allowed_domains: list[AllowedDomainInput] = Field(min_length=1, max_length=20)
-    max_pages: int = Field(default=100, ge=1, le=10_000)
+    max_pages: int = Field(default=100, ge=1, le=100_000)
     max_depth: int = Field(default=2, ge=0, le=10)
     per_domain_delay_ms: int = Field(default=1000, ge=250, le=60_000)
     request_timeout_seconds: float = Field(default=15.0, ge=1.0, le=60.0)
