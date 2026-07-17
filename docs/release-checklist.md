@@ -16,6 +16,7 @@
 - [ ] AWS recovery exercise met RPO/RTO target
 - [ ] Teardown audit proved no active billable Atlas resources
 - [ ] Clean-checkout recreation passed
-- [ ] Public GitHub repository, signed release tag, screenshots, and demo recording published
+- [x] Public GitHub repository published with green CI and CodeQL
+- [ ] Signed release tag, final screenshots, and demo recording published
 
 Unchecked items are release blockers, not aspirational polish.

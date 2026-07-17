@@ -2,7 +2,7 @@
 
 Atlas is a durable, policy-aware web crawl, extraction, versioning, and search platform. It is built to answer a harder question than “can a worker download pages?”: **can a crawl remain correct when queues lose notifications, workers disappear, search is unavailable, and the same URL changes over time?**
 
-The permanent project record is deployed at [atlas-rho-brown.vercel.app](https://atlas-rho-brown.vercel.app). `atlas.yuvrajkashyap.com` is attached to the Vercel project and awaits its Porkbun CNAME.
+The permanent project record is deployed at [atlas-rho-brown.vercel.app](https://atlas-rho-brown.vercel.app), and the source is public at [YuvrajKashyap/atlas](https://github.com/YuvrajKashyap/atlas). `atlas.yuvrajkashyap.com` is attached to the Vercel project and awaits its Porkbun CNAME.
 
 ![Atlas permanent project record](docs/assets/atlas-home.png)
 
@@ -102,4 +102,4 @@ No AWS apply has been run from this checkout because AWS credentials are not con
 
 ## Current release status
 
-The permanent Vercel site and Edge Config contract are live and verified in the intentional `offline` state. The backend has 69 passing tests, 91.03% overall coverage, and at least 90% coverage in every critical pipeline module. Terraform validates and Checkov reports zero failures. The remaining hard gates are tracked openly: the deterministic 10,000-page recovery benchmark has not yet produced a publishable artifact, an authenticated live-console journey and AWS recovery/teardown have not run, the public repository is not yet published, and the demo recording is pending that verified release.
+The permanent Vercel site and Edge Config contract are live and verified in the intentional `offline` state. The public GitHub repository is online with green CI, container scanning, SBOM generation, and CodeQL analysis for Python and TypeScript. The backend has 69 passing tests, 91.03% overall coverage, and at least 90% coverage in every critical pipeline module. Terraform validates and Checkov reports zero failures. The remaining hard gates are tracked openly: the deterministic 10,000-page recovery benchmark has not yet produced a publishable artifact, an authenticated live-console journey and AWS recovery/teardown have not run, and the signed release and demo recording are pending that verified release.
