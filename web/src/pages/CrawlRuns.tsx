@@ -183,7 +183,7 @@ function CreateRunDialog({ onClose }: { onClose: () => void }) {
           <div className="form-grid">
             <label>
               Page budget
-              <input name="max_pages" type="number" min="1" max="10000" defaultValue="100" />
+              <input name="max_pages" type="number" min="1" max="100000" defaultValue="100" />
             </label>
             <label>
               Max depth
