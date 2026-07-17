@@ -10,17 +10,19 @@
 
 ## Procedure
 
-Run **launch Atlas runtime** with profile, explicit lifetime, cost ceiling, and demo email. Review the Infracost output before approving the protected environment. The workflow will:
+Run **launch Atlas runtime** with profile, explicit lifetime, cost ceiling, and demo email. The operator-entered ceiling is enforced against a read-only Infracost plan before resource creation. The workflow will:
 
-1. Create a versioned, encrypted environment-specific state bucket.
-2. Plan the entire topology and reject a prorated estimate over the declared ceiling.
-3. Publish `starting` to Edge Config.
-4. Build an immutable ECR image and apply Terraform.
-5. Wait for migration-guarded ECS services.
-6. Provision the temporary Cognito administrator.
-7. Prove unauthenticated denial, authenticated access, and a one-page crawl through indexing.
-8. Publish the verified CloudFront API URL and expiration as `online`.
-9. Run Playwright against the permanent domain with the ephemeral Cognito token, verify the operational surfaces, and capture browser evidence.
+1. Validate every required secret, the bounded lifetime, environment ID, and operator-entered cost ceiling.
+2. Authenticate through GitHub OIDC and create a read-only Terraform plan with the backend disabled.
+3. Produce the prorated Infracost estimate and stop before creating any AWS resource when it exceeds the declared ceiling.
+4. Create the versioned, encrypted environment-specific state bucket only after the cost gate passes.
+5. Publish `starting` to Edge Config.
+6. Build an immutable ECR image and apply Terraform.
+7. Wait for migration-guarded ECS services.
+8. Provision the temporary Cognito administrator.
+9. Prove unauthenticated denial, authenticated access, and a one-page crawl through indexing.
+10. Publish the verified CloudFront API URL and expiration as `online`.
+11. Run Playwright against the permanent domain with the ephemeral Cognito token, verify the operational surfaces, and capture browser evidence.
 
 Do not manually set Edge Config to `online`. If a launch fails, its failure path attempts a complete Terraform rollback and returns the public state to `offline`.
 
