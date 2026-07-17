@@ -171,11 +171,36 @@ jobs:
       - name: Publish verified online state
         run: node scripts/edge-config.mjs set online "$ATLAS_API_BASE_URL" "$ENVIRONMENT_ID" "$EXPIRES_AT" "Atlas is online for a time-bounded, authenticated demonstration."
 
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Prove the authenticated browser console against the live runtime
+        working-directory: web
+        env:
+          PLAYWRIGHT_BASE_URL: https://atlas.yuvrajkashyap.com
+          ATLAS_E2E_SCREENSHOT_PATH: ../artifacts/live-console.png
+          ATLAS_E2E_EVIDENCE_PATH: ../artifacts/live-console.json
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+          export ATLAS_E2E_ID_TOKEN="$ATLAS_ID_TOKEN"
+          export ATLAS_E2E_EXPECTED_ENVIRONMENT="$ENVIRONMENT_ID"
+          pnpm exec playwright test e2e/live.spec.ts
+
       - uses: actions/upload-artifact@v7
         with:
           name: atlas-launch-${{ env.ENVIRONMENT_ID }}
           path: |
             artifacts/smoke-run.json
+            artifacts/live-console.json
+            artifacts/live-console.png
             infra/terraform/runtime/infracost.json
           retention-days: 30
 

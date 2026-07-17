@@ -20,6 +20,7 @@ Run **launch Atlas runtime** with profile, explicit lifetime, cost ceiling, and 
 6. Provision the temporary Cognito administrator.
 7. Prove unauthenticated denial, authenticated access, and a one-page crawl through indexing.
 8. Publish the verified CloudFront API URL and expiration as `online`.
+9. Run Playwright against the permanent domain with the ephemeral Cognito token, verify the operational surfaces, and capture browser evidence.
 
 Do not manually set Edge Config to `online`. If a launch fails, its failure path attempts a complete Terraform rollback and returns the public state to `offline`.
 
@@ -27,5 +28,5 @@ Do not manually set Edge Config to `online`. If a launch fails, its failure path
 
 - `/api/runtime` says `online` with the expected environment and expiration.
 - `/status` reports browser verification.
-- `/console` redirects to Cognito and returns with an authorized session.
-- The workflow artifact contains the persisted smoke run and cost estimate.
+- `/console` accepts the ephemeral Cognito-issued token and renders persisted operational data without API or browser errors.
+- The workflow artifact contains the persisted smoke run, authenticated-browser JSON and screenshot, and cost estimate.

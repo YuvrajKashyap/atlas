@@ -24,4 +24,6 @@ The release gate queries PostgreSQL and OpenSearch after recovery. It requires:
 
 The harness writes `web/public/benchmarks/latest.json` only after all invariants pass. The file includes the Git commit, verification timestamp, corpus size, elapsed time, counts, and named fault scenarios. Hand-authored benchmark numbers are prohibited.
 
+The current published artifact was verified by [GitHub Actions run 29606520125](https://github.com/YuvrajKashyap/atlas/actions/runs/29606520125) against commit [`cedd63358985fbae7ceff8b8041a90d40657f3ba`](https://github.com/YuvrajKashyap/atlas/commit/cedd63358985fbae7ceff8b8041a90d40657f3ba). The website reads the checked artifact directly and fails closed if its commit, counts, required invariants, or fault matrix are malformed.
+
 Run the manual `deterministic benchmark` GitHub workflow to execute the full suite. Locally, `docker compose --profile benchmark up -d corpus` starts only the fixture; that command does not produce or publish evidence. `scripts/benchmark.mjs` creates or waits for a run, and `backend/scripts/verify_benchmark.py` is the only writer for the public report.
