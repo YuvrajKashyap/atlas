@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from atlas.enums import PipelineTaskStatus, PipelineTaskType
-from atlas.models import DomainLease, PipelineTask, WorkerHeartbeat
+from atlas.models import DomainLease, FrontierEntry, PipelineTask, WorkerHeartbeat
 from atlas.retry import retry_delay
 
 TASK_QUEUES = {
@@ -58,7 +58,7 @@ def heartbeat_task(
 ) -> bool:
     now = datetime.now(UTC)
     expires_at = now + timedelta(seconds=lease_seconds)
-    changed = session.scalar(
+    frontier_entry_id = session.scalar(
         update(PipelineTask)
         .where(
             PipelineTask.id == task_id,
@@ -66,20 +66,25 @@ def heartbeat_task(
             PipelineTask.lease_token == lease_token,
         )
         .values(last_heartbeat_at=now, lease_expires_at=expires_at)
-        .returning(PipelineTask.id)
+        .returning(PipelineTask.frontier_entry_id)
     )
-    if changed:
+    if frontier_entry_id:
+        session.execute(
+            update(FrontierEntry)
+            .where(FrontierEntry.id == frontier_entry_id)
+            .values(lease_expires_at=expires_at)
+        )
         session.execute(
             update(DomainLease)
             .where(DomainLease.task_id == task_id, DomainLease.lease_token == lease_token)
             .values(expires_at=expires_at)
         )
-    return bool(changed)
+    return bool(frontier_entry_id)
 
 
 def complete_task(session: Session, task_id: uuid.UUID, lease_token: uuid.UUID) -> bool:
     now = datetime.now(UTC)
-    changed = session.scalar(
+    frontier_entry_id = session.scalar(
         update(PipelineTask)
         .where(
             PipelineTask.id == task_id,
@@ -96,11 +101,16 @@ def complete_task(session: Session, task_id: uuid.UUID, lease_token: uuid.UUID) 
             last_error_type=None,
             last_error_message=None,
         )
-        .returning(PipelineTask.id)
+        .returning(PipelineTask.frontier_entry_id)
     )
-    if changed:
+    if frontier_entry_id:
+        session.execute(
+            update(FrontierEntry)
+            .where(FrontierEntry.id == frontier_entry_id)
+            .values(lease_expires_at=None, rq_job_id=None)
+        )
         session.execute(delete(DomainLease).where(DomainLease.task_id == task_id))
-    return bool(changed)
+    return bool(frontier_entry_id)
 
 
 def fail_task(
@@ -129,6 +139,11 @@ def fail_task(
     task.lease_expires_at = None
     task.rq_job_id = None
     task.completed_at = None if retryable else now
+    session.execute(
+        update(FrontierEntry)
+        .where(FrontierEntry.id == task.frontier_entry_id)
+        .values(lease_expires_at=None, rq_job_id=None)
+    )
     session.execute(delete(DomainLease).where(DomainLease.task_id == task.id))
     return task.status
 
@@ -164,6 +179,11 @@ def recover_expired_tasks(session: Session, *, limit: int = 500) -> tuple[int, i
         task.lease_token = None
         task.lease_expires_at = None
         task.rq_job_id = None
+        session.execute(
+            update(FrontierEntry)
+            .where(FrontierEntry.id == task.frontier_entry_id)
+            .values(lease_expires_at=None, rq_job_id=None)
+        )
         session.execute(delete(DomainLease).where(DomainLease.task_id == task.id))
     session.execute(delete(DomainLease).where(DomainLease.expires_at < now))
     return recovered, dead_lettered

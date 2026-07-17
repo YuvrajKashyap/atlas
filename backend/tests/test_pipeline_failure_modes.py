@@ -4,7 +4,7 @@ from typing import cast
 
 import pytest
 from opensearchpy import OpenSearchException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from atlas.config import Settings
@@ -193,7 +193,11 @@ def test_sitemap_discovery_is_recorded_without_blocking_page_fetch(
         return RobotsDecision(True, "robots_allowed", 250, ("https://example.com/sitemap.xml",))
 
     def discover(*_args: object, **_kwargs: object) -> SitemapDiscovery:
-        return SitemapDiscovery(("https://example.com/from-sitemap",), 1, 0)
+        return SitemapDiscovery(
+            tuple(f"https://example.com/from-sitemap/{index}" for index in range(1001)),
+            1,
+            0,
+        )
 
     def fetch(
         _run: CrawlRun,
@@ -210,7 +214,11 @@ def test_sitemap_discovery_is_recorded_without_blocking_page_fetch(
     assert process_pipeline_task(str(task.id), str(token))["status"] == "fetched"
     db_session.expire_all()
     state = db_session.scalar(select(DomainState).where(DomainState.run_id == task.run_id))
-    assert state is not None and state.sitemap_url_count == 1
+    assert state is not None and state.sitemap_url_count == 1001
+    frontier_count = db_session.scalar(
+        select(func.count()).select_from(FrontierEntry).where(FrontierEntry.run_id == task.run_id)
+    )
+    assert frontier_count == 1002
 
 
 def test_sitemap_failure_is_non_blocking_and_extract_requires_artifact(

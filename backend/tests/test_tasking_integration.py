@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from atlas.enums import PipelineTaskStatus, PipelineTaskType
-from atlas.models import DomainLease, PipelineTask, WorkerHeartbeat
+from atlas.models import DomainLease, FrontierEntry, PipelineTask, WorkerHeartbeat
 from atlas.schemas import AllowedDomainInput, CrawlRunCreate
 from atlas.services.runs import create_run, start_run
 from atlas.tasking import (
@@ -41,6 +41,11 @@ def _lease(session: Session, task: PipelineTask, *, attempts: int = 1) -> uuid.U
     task.lease_token = token
     task.lease_owner = "test-worker"
     task.lease_expires_at = datetime.now(UTC) + timedelta(minutes=1)
+    task.rq_job_id = f"job-{task.id}"
+    entry = session.get(FrontierEntry, task.frontier_entry_id)
+    assert entry is not None
+    entry.lease_expires_at = task.lease_expires_at
+    entry.rq_job_id = task.rq_job_id
     session.add(
         DomainLease(
             run_id=task.run_id,
@@ -60,8 +65,13 @@ def test_heartbeat_complete_and_worker_upsert(db_session: Session) -> None:
 
     assert heartbeat_task(db_session, task.id, token, lease_seconds=120)
     assert not heartbeat_task(db_session, task.id, uuid.uuid4(), lease_seconds=120)
+    entry = db_session.get(FrontierEntry, task.frontier_entry_id)
+    assert entry is not None and entry.lease_expires_at == task.lease_expires_at
     assert complete_task(db_session, task.id, token)
     assert not complete_task(db_session, task.id, token)
+    db_session.expire(entry)
+    assert entry.lease_expires_at is None
+    assert entry.rq_job_id is None
 
     upsert_worker_heartbeat(
         db_session,
@@ -111,6 +121,9 @@ def test_failure_retry_dead_letter_and_expired_recovery(db_session: Session) -> 
         == PipelineTaskStatus.RETRY_SCHEDULED
     )
     db_session.commit()
+    retry_entry = db_session.get(FrontierEntry, task.frontier_entry_id)
+    assert retry_entry is not None and retry_entry.lease_expires_at is None
+    assert retry_entry.rq_job_id is None
 
     token = _lease(db_session, task, attempts=task.max_attempts)
     assert (
@@ -155,3 +168,7 @@ def test_failure_retry_dead_letter_and_expired_recovery(db_session: Session) -> 
     assert (recovered, dead) == (1, 1)
     assert first.status == PipelineTaskStatus.RETRY_SCHEDULED
     assert second.status == PipelineTaskStatus.DEAD_LETTERED
+    first_entry = db_session.get(FrontierEntry, first.frontier_entry_id)
+    second_entry = db_session.get(FrontierEntry, second.frontier_entry_id)
+    assert first_entry is not None and first_entry.lease_expires_at is None
+    assert second_entry is not None and second_entry.lease_expires_at is None

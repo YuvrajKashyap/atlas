@@ -24,7 +24,7 @@ jobs:
         with:
           version: "0.11.6"
       - name: Start real dependencies and deterministic corpus
-        run: docker compose --profile benchmark up -d --build postgres redis opensearch corpus api scheduler worker
+        run: docker compose --profile benchmark up -d --build --scale worker=8 postgres redis opensearch corpus api scheduler worker
       - name: Wait for API
         run: |
           for attempt in $(seq 1 90); do
@@ -86,7 +86,7 @@ jobs:
           PY
             docker compose kill worker
             sleep 10
-            docker compose up -d worker
+            docker compose start worker
             docker compose exec -T redis redis-cli FLUSHALL
             docker compose restart scheduler
             sleep 30
