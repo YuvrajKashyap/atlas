@@ -50,6 +50,31 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Validate release secrets before AWS access
+        env:
+          AWS_GITHUB_ROLE_ARN: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
+          ATLAS_BUDGET_EMAIL: ${{ secrets.ATLAS_BUDGET_EMAIL }}
+          ATLAS_DEMO_PASSWORD: ${{ secrets.ATLAS_DEMO_PASSWORD }}
+        run: |
+          required=(
+            AWS_GITHUB_ROLE_ARN
+            INFRACOST_API_KEY
+            ATLAS_BUDGET_EMAIL
+            ATLAS_DEMO_PASSWORD
+            VERCEL_API_TOKEN
+            VERCEL_TEAM_ID
+            EDGE_CONFIG_ID
+          )
+          missing=()
+          for name in "${required[@]}"; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing required release secret: %s\n' "${missing[@]}"
+            exit 1
+          fi
+
       - name: Derive bounded deployment metadata
         env:
           REQUESTED_ID: ${{ inputs.environment_id }}
@@ -79,26 +104,16 @@ jobs:
           role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Create disposable encrypted state bucket
-        run: |
-          account_id="$(aws sts get-caller-identity --query Account --output text)"
-          state_bucket="atlas-tf-${account_id}-${ENVIRONMENT_ID}"
-          aws s3api head-bucket --bucket "$state_bucket" 2>/dev/null || aws s3api create-bucket --bucket "$state_bucket" --region "$AWS_REGION"
-          aws s3api put-bucket-versioning --bucket "$state_bucket" --versioning-configuration Status=Enabled
-          aws s3api put-bucket-encryption --bucket "$state_bucket" --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-          aws s3api put-public-access-block --bucket "$state_bucket" --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-          echo "STATE_BUCKET=$state_bucket" >> "$GITHUB_ENV"
-
       - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.15.8
 
-      - name: Initialize and create reviewed plan
+      - name: Create a read-only local cost plan
         working-directory: infra/terraform/runtime
         run: |
-          terraform init -reconfigure -backend-config="bucket=$STATE_BUCKET" -backend-config="key=runtime.tfstate" -backend-config="region=$AWS_REGION"
-          terraform plan -var-file="profiles/${{ inputs.profile }}.tfvars" -out=atlas.tfplan
-          terraform show -json atlas.tfplan > atlas.tfplan.json
+          terraform init -backend=false
+          terraform plan -var-file="profiles/${{ inputs.profile }}.tfvars" -out=cost-review.tfplan
+          terraform show -json cost-review.tfplan > cost-review.tfplan.json
 
       - uses: infracost/actions/setup@v4
         with:
@@ -110,12 +125,26 @@ jobs:
           DURATION: ${{ inputs.duration_hours }}
           COST_CEILING: ${{ inputs.cost_ceiling_usd }}
         run: |
-          infracost breakdown --path atlas.tfplan.json --format json --out-file infracost.json
+          infracost breakdown --path cost-review.tfplan.json --format json --out-file infracost.json
           infracost output --path infracost.json --format table
           monthly="$(jq -r '.totalMonthlyCost' infracost.json)"
           # Keep JavaScript template interpolation away from the shell.
           # shellcheck disable=SC2016
           node -e 'const [monthly,hours,ceiling]=process.argv.slice(1).map(Number); const estimate=monthly/730*hours; console.log(`Prorated estimate: $${estimate.toFixed(2)}`); if (!Number.isFinite(estimate) || estimate > ceiling) process.exit(1)' "$monthly" "$DURATION" "$COST_CEILING"
+
+      - name: Create disposable encrypted state bucket after cost approval
+        run: |
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          state_bucket="atlas-tf-${account_id}-${ENVIRONMENT_ID}"
+          aws s3api head-bucket --bucket "$state_bucket" 2>/dev/null || aws s3api create-bucket --bucket "$state_bucket" --region "$AWS_REGION"
+          aws s3api put-bucket-versioning --bucket "$state_bucket" --versioning-configuration Status=Enabled
+          aws s3api put-bucket-encryption --bucket "$state_bucket" --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+          aws s3api put-public-access-block --bucket "$state_bucket" --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+          echo "STATE_BUCKET=$state_bucket" >> "$GITHUB_ENV"
+
+      - name: Initialize the authoritative remote backend
+        working-directory: infra/terraform/runtime
+        run: terraform init -reconfigure -backend-config="bucket=$STATE_BUCKET" -backend-config="key=runtime.tfstate" -backend-config="region=$AWS_REGION"
 
       - name: Publish starting state
         run: node scripts/edge-config.mjs set starting "" "$ENVIRONMENT_ID" "$EXPIRES_AT" "Atlas is provisioning an expiring AWS runtime."
