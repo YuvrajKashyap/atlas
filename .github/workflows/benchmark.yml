@@ -19,7 +19,7 @@ jobs:
       ATLAS_CORPUS_URL: http://localhost:8090
       ATLAS_FAULT_SCENARIOS: duplicate-delivery,worker-termination,expired-leases,redis-loss,opensearch-outage,postgres-reconnect,redirects,malformed-html,robots-exclusion,oversized-response
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.11.6"
