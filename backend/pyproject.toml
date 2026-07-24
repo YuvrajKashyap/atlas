@@ -23,11 +23,11 @@ dependencies = [
   "pydantic-settings>=2.10,<3",
   "prometheus-client>=0.22,<1",
   "pyjwt[crypto]>=2.10,<3",
-  "redis>=6,<7",
+  "redis>=6,<9",
   "rq>=2.6,<3",
   "selectolax>=0.3.32,<1",
   "sqlalchemy>=2.0.41,<2.1",
-  "structlog>=25,<26",
+  "structlog>=25,<27",
   "trafilatura>=2.0,<3",
   "uvicorn[standard]>=0.35,<1",
 ]
@@ -37,11 +37,11 @@ dev = [
   "httpx2>=2,<3",
   "hypothesis>=6.135,<7",
   "pyright>=1.1.403,<2",
-  "pytest>=8.4,<9",
-  "pytest-cov>=6.2,<7",
+  "pytest>=8.4,<10",
+  "pytest-cov>=6.2,<8",
   "respx>=0.22,<1",
   "ruff>=0.12,<1",
-  "time-machine>=2.16,<3",
+  "time-machine>=2.16,<4",
 ]
 
 [build-system]
